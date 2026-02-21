@@ -125,7 +125,7 @@ export function updateThinkingNote() {
     const note = $('thinkingNote');
     if (note) {
         const model = $('modelSelect').value;
-        const isProModel = model.includes('gemini-3-pro') || model.includes('nano-banana-pro');
+        const isProModel = model.includes('gemini-3-pro');
         note.style.display = isProModel ? 'block' : 'none';
     }
 }
