@@ -546,6 +546,22 @@ input:checked+.slider:before {
     color: var(--text-secondary);
 }
 
+/* Profile Section */
+.profile-section {
+    margin-bottom: var(--spacing-md);
+}
+
+.profile-buttons {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-sm);
+}
+
+.profile-buttons button {
+    font-size: var(--font-size-sm);
+    padding: var(--spacing-sm);
+}
+
 /* Error Box */
 .error {
     background: #3f1111;

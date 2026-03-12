@@ -164,7 +164,8 @@ function getMimeType(dataUrl) {
  * Get file extension for MIME type
  */
 function getExtension(mimeType) {
-    return mimeType === 'image/jpeg' ? '.jpg' : '.png';
+    // Always return .png (API returns PNG by default)
+    return '.png';
 }
 
 /**
@@ -211,14 +212,14 @@ export function generateFilename(prompt, variationIndex = 0, batchName = '', mim
 }
 
 /**
- * Save image to filesystem (preserves original format)
+ * Save image to filesystem (preserves format, ensures .png extension)
  * @param {string} imageDataUrl - The image data URL
  * @param {string} prompt - The prompt text
  * @param {number} variationIndex - Variation index (0-based)
  * @param {string} batchName - Optional batch name prefix
  */
 export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex = 0, batchName = '') {
-    const mimeType = getMimeType(imageDataUrl);
+    const mimeType = 'image/png'; // API returns PNG
 
     // Fallback: trigger browser download
     if (!directoryHandle || !await hasWritePermission()) {
@@ -229,7 +230,7 @@ export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex
         const filename = generateFilename(prompt, variationIndex, batchName, mimeType);
         const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
 
-        // Convert data URL to blob — save in original format (no conversion)
+        // Convert data URL to blob
         const response = await fetch(imageDataUrl);
         const blob = await response.blob();
 
@@ -257,7 +258,7 @@ export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex
         }
 
         // Fallback to download
-        return triggerDownload(imageDataUrl, prompt, variationIndex, batchName);
+        return triggerDownload(imageDataUrl, prompt, variationIndex, batchName, mimeType);
     }
 }
 
@@ -265,7 +266,7 @@ export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex
  * Fallback: trigger browser download
  */
 function triggerDownload(imageDataUrl, prompt, variationIndex, batchName = '', mimeType = 'image/png') {
-    const filename = generateFilename(prompt, variationIndex, batchName, mimeType);
+    const filename = generateFilename(prompt, variationIndex, batchName, 'image/png');
     const a = document.createElement('a');
     a.href = imageDataUrl;
     a.download = filename;

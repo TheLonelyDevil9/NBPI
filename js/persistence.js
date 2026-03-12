@@ -23,6 +23,7 @@ export function persistAllInputs() {
     persistInput('prompt', $('prompt').value);
     persistInput('ratio', $('ratio').value);
     persistInput('resolution', $('resolution').value);
+    persistInput('variations', $('variations')?.value || '1');
     persistInput('searchToggle', $('searchToggle').checked);
     persistInput('thinkingToggle', $('thinkingToggle').checked);
     persistInput('thinkingBudget', $('thinkingBudget').value);
@@ -41,6 +42,7 @@ export function restoreAllInputs() {
     $('prompt').value = loadPersistedInput('prompt', '');
     $('ratio').value = loadPersistedInput('ratio', '');
     $('resolution').value = loadPersistedInput('resolution', '4K');
+    if ($('variations')) $('variations').value = loadPersistedInput('variations', '1');
     $('searchToggle').checked = loadPersistedInput('searchToggle', false);
     $('thinkingToggle').checked = loadPersistedInput('thinkingToggle', true);
     $('thinkingBudget').value = loadPersistedInput('thinkingBudget', '-1');
@@ -72,6 +74,7 @@ export function setupInputPersistence() {
     $('prompt').addEventListener('input', persist);
     $('ratio').addEventListener('change', persist);
     $('resolution').addEventListener('change', persist);
+    if ($('variations')) $('variations').addEventListener('input', persist);
     $('searchToggle').addEventListener('change', persist);
     $('thinkingToggle').addEventListener('change', persist);
     $('thinkingBudget').addEventListener('input', persist);

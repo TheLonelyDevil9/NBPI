@@ -30,6 +30,7 @@ function getCachedElements() {
             searchToggle: $('searchToggle'),
             thinkingToggle: $('thinkingToggle'),
             thinkingBudget: $('thinkingBudget'),
+            variations: $('variations'),
             generateBtn: $('generateBtn'),
             cancelBtn: $('cancelBtn'),
             spinner: $('spinner'),
@@ -188,6 +189,22 @@ export async function generate() {
     if (!el.modelSelect.value) return showToast('Select model');
     if (!el.prompt.value.trim()) return showToast('Enter prompt');
 
+    const variations = parseInt(el.variations?.value || 1);
+
+    // If variations > 1, use queue system
+    if (variations > 1) {
+        const config = getCurrentConfig();
+        const { addToQueue, startQueue } = await import('./queue.js');
+        const { toggleQueuePanel } = await import('./queueUI.js');
+
+        addToQueue([el.prompt.value], variations, config, refImages, '');
+        startQueue();
+        toggleQueuePanel(true);
+        showToast(`Added ${variations} variations to queue`);
+        return;
+    }
+
+    // Single generation
     abortController = new AbortController();
     setGenerating(true);
 

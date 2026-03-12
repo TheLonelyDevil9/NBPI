@@ -14,6 +14,7 @@ import { loadSavedPrompts, isDropdownOpen, closePromptsDropdown, saveCurrentProm
 import { isFileSystemSupported, restoreDirectoryHandle } from './filesystem.js';
 import { restoreQueueState, hasResumableQueue } from './queue.js';
 import { initQueueUI, handleBatchButtonClick, toggleQueuePanel, closeQueueSetup } from './queueUI.js';
+import { saveProfile, loadProfile, listProfiles, deleteProfile, exportProfile, importProfile, getActiveProfile } from './profiles.js';
 
 // Initialize application
 async function init() {
@@ -119,6 +120,9 @@ async function init() {
     // Initialize queue UI
     initQueueUI();
 
+    // Initialize profile UI
+    updateProfileDropdown();
+
     // Check for resumable queue
     if (savedQueue && hasResumableQueue()) {
         showToast('Previous queue found. Open Batch Queue to resume.');
@@ -190,6 +194,114 @@ async function init() {
 
     console.log('🍌 NBPI initialized');
 }
+
+/**
+ * Update profile dropdown with available profiles
+ */
+function updateProfileDropdown() {
+    const select = $('profileSelect');
+    if (!select) return;
+
+    const profiles = listProfiles();
+    const activeProfile = getActiveProfile();
+
+    // Clear and rebuild options
+    select.innerHTML = '<option value="">None</option>';
+    profiles.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        if (name === activeProfile) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+}
+
+/**
+ * Save current settings as profile
+ */
+window.saveCurrentProfile = function() {
+    const nameInput = $('profileName');
+    const name = nameInput.value.trim();
+
+    if (!name) {
+        showToast('Enter a profile name');
+        return;
+    }
+
+    if (saveProfile(name)) {
+        nameInput.value = '';
+        updateProfileDropdown();
+    }
+};
+
+/**
+ * Load selected profile
+ */
+window.loadSelectedProfile = function() {
+    const select = $('profileSelect');
+    const name = select.value;
+
+    if (!name) {
+        showToast('Select a profile to load');
+        return;
+    }
+
+    if (loadProfile(name)) {
+        // Reload the page to apply all settings
+        location.reload();
+    }
+};
+
+/**
+ * Delete selected profile
+ */
+window.deleteSelectedProfile = function() {
+    const select = $('profileSelect');
+    const name = select.value;
+
+    if (!name) {
+        showToast('Select a profile to delete');
+        return;
+    }
+
+    if (confirm(`Delete profile "${name}"?`)) {
+        if (deleteProfile(name)) {
+            updateProfileDropdown();
+        }
+    }
+};
+
+/**
+ * Export selected profile
+ */
+window.exportSelectedProfile = function() {
+    const select = $('profileSelect');
+    const name = select.value;
+
+    if (!name) {
+        showToast('Select a profile to export');
+        return;
+    }
+
+    exportProfile(name);
+};
+
+/**
+ * Import profile from file
+ */
+window.importProfileFile = async function(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (await importProfile(file)) {
+        updateProfileDropdown();
+    }
+
+    // Clear file input
+    event.target.value = '';
+};
 
 /**
  * Close all open modals and panels
