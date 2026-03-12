@@ -253,6 +253,9 @@ export async function generate() {
         showToast('Generated!');
         scrollToResult();
 
+        // Show "Queue Another" button
+        $('queueAnotherBtn').classList.remove('hidden');
+
     } catch (e) {
         if (e.name === 'AbortError') {
             showToast('Canceled');
@@ -346,8 +349,30 @@ export function clearAll() {
         resetZoom();
     }
 
+    // Hide "Queue Another" button
+    $('queueAnotherBtn').classList.add('hidden');
+
     import('./persistence.js').then(m => m.persistAllInputs());
     showToast('All cleared');
+}
+
+// Queue another generation with same settings
+export async function queueAnother() {
+    const el = getCachedElements();
+
+    if (!el.apiKey.value) return showToast('Enter API key');
+    if (!el.modelSelect.value) return showToast('Select model');
+    if (!el.prompt.value.trim()) return showToast('Enter prompt');
+
+    const variations = parseInt(el.variations?.value || 1);
+    const config = getCurrentConfig();
+    const { addToQueue, startQueue } = await import('./queue.js');
+    const { toggleQueuePanel } = await import('./queueUI.js');
+
+    addToQueue([el.prompt.value], variations, config, refImages, '');
+    startQueue();
+    toggleQueuePanel(true);
+    showToast(`Added ${variations} variation${variations > 1 ? 's' : ''} to queue`);
 }
 
 // Make functions globally available for HTML onclick handlers
@@ -356,3 +381,4 @@ window.cancelGeneration = cancelGeneration;
 window.iterate = iterate;
 window.deleteCurrentImage = deleteCurrentImage;
 window.clearAll = clearAll;
+window.queueAnother = queueAnother;

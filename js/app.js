@@ -9,7 +9,7 @@ import { refreshModels } from './models.js';
 import { loadRefImages, setupRefDragDrop, setupClipboardPaste, setupRefPreviewSwipe } from './references.js';
 import { initDB } from './history.js';
 import { setupZoomHandlers } from './zoom.js';
-import { generate } from './generation.js';
+import { generate, queueAnother } from './generation.js';
 import { loadSavedPrompts, isDropdownOpen, closePromptsDropdown, saveCurrentPrompt } from './prompts.js';
 import { isFileSystemSupported, restoreDirectoryHandle } from './filesystem.js';
 import { restoreQueueState, hasResumableQueue } from './queue.js';
