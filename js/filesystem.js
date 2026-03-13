@@ -174,8 +174,9 @@ function getExtension(mimeType) {
  * @param {number} variationIndex - Variation index (0-based)
  * @param {string} batchName - Optional batch name prefix
  * @param {string} mimeType - Image MIME type (default: image/png)
+ * @param {string} name - Optional per-prompt name (replaces prompt snippet)
  */
-export function generateFilename(prompt, variationIndex = 0, batchName = '', mimeType = 'image/png') {
+export function generateFilename(prompt, variationIndex = 0, batchName = '', mimeType = 'image/png', name = '') {
     // Sanitize batch name if provided
     const batchPrefix = batchName
         ? batchName
@@ -188,16 +189,25 @@ export function generateFilename(prompt, variationIndex = 0, batchName = '', mim
             .slice(0, 30) + '_'
         : '';
 
-    // Take first 40 chars of prompt
-    const snippet = prompt
-        .slice(0, 40)
-        .trim()
-        .toLowerCase()
-        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '') // Remove invalid filename chars
-        .replace(/\s+/g, '_')                   // Spaces to underscores
-        .replace(/_+/g, '_')                    // Collapse multiple underscores
-        .replace(/^_|_$/g, '')                  // Trim underscores
-        || 'image';                             // Fallback if empty
+    // Use per-prompt name if provided, otherwise fall back to prompt snippet
+    const trimmedName = (name || '').trim();
+    const snippet = trimmedName
+        ? trimmedName
+            .toLowerCase()
+            .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 50)
+        : prompt
+            .slice(0, 40)
+            .trim()
+            .toLowerCase()
+            .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+            .replace(/\s+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+        || 'image';
 
     // ISO timestamp, filesystem-safe
     const timestamp = new Date().toISOString()
@@ -217,17 +227,18 @@ export function generateFilename(prompt, variationIndex = 0, batchName = '', mim
  * @param {string} prompt - The prompt text
  * @param {number} variationIndex - Variation index (0-based)
  * @param {string} batchName - Optional batch name prefix
+ * @param {string} name - Optional per-prompt name (replaces prompt snippet)
  */
-export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex = 0, batchName = '') {
+export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex = 0, batchName = '', name = '') {
     const mimeType = 'image/png'; // API returns PNG
 
     // Fallback: trigger browser download
     if (!directoryHandle || !await hasWritePermission()) {
-        return triggerDownload(imageDataUrl, prompt, variationIndex, batchName, mimeType);
+        return triggerDownload(imageDataUrl, prompt, variationIndex, batchName, mimeType, name);
     }
 
     try {
-        const filename = generateFilename(prompt, variationIndex, batchName, mimeType);
+        const filename = generateFilename(prompt, variationIndex, batchName, mimeType, name);
         const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
 
         // Convert data URL to blob
@@ -258,15 +269,15 @@ export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex
         }
 
         // Fallback to download
-        return triggerDownload(imageDataUrl, prompt, variationIndex, batchName, mimeType);
+        return triggerDownload(imageDataUrl, prompt, variationIndex, batchName, mimeType, name);
     }
 }
 
 /**
  * Fallback: trigger browser download
  */
-function triggerDownload(imageDataUrl, prompt, variationIndex, batchName = '', mimeType = 'image/png') {
-    const filename = generateFilename(prompt, variationIndex, batchName, 'image/png');
+function triggerDownload(imageDataUrl, prompt, variationIndex, batchName = '', mimeType = 'image/png', name = '') {
+    const filename = generateFilename(prompt, variationIndex, batchName, 'image/png', name);
     const a = document.createElement('a');
     a.href = imageDataUrl;
     a.download = filename;

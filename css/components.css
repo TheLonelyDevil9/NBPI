@@ -1206,6 +1206,28 @@ input:checked+.slider:before {
     padding: var(--spacing-lg);
 }
 
+/* Prompt Box Name Input */
+.prompt-box-name {
+    width: 100%;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    padding: var(--spacing-xs) var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+}
+
+.prompt-box-name:focus {
+    border-color: var(--color-primary);
+    outline: none;
+}
+
+.prompt-box-name::placeholder {
+    color: var(--text-placeholder);
+}
+
 /* Prompt Box Textarea */
 .prompt-box-textarea {
     width: 100%;

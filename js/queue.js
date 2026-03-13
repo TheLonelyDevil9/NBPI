@@ -61,9 +61,10 @@ export function setOnProgress(callback) {
  * @param {Object} config - Generation config
  * @param {Array} refImagesSnapshot - Reference images to use
  * @param {string} batchName - Optional batch name for filename prefix
+ * @param {string[]} names - Optional per-prompt names for filename labels
  * @returns {Object[]} - Created queue items
  */
-export function addToQueue(prompts, variationsPerPrompt, config, refImagesSnapshot = [], batchName = '') {
+export function addToQueue(prompts, variationsPerPrompt, config, refImagesSnapshot = [], batchName = '', names = []) {
     const newItems = [];
     const timestamp = Date.now();
 
@@ -98,7 +99,8 @@ export function addToQueue(prompts, variationsPerPrompt, config, refImagesSnapsh
                 filename: null,
                 config: { ...config },
                 refImages: itemRefs,
-                batchName: batchName || ''
+                batchName: batchName || '',
+                name: (names[promptIndex] || '').trim()
             });
 
             console.log(`[Queue] Created item v${v + 1}/${variationsPerPrompt} with ${itemRefs.length} refs`);
@@ -349,7 +351,8 @@ async function processQueue() {
                         result.imageData,
                         item.prompt,
                         item.variationIndex,
-                        item.batchName
+                        item.batchName,
+                        item.name
                     );
                     filename = saveResult.filename;
                 } catch (e) {

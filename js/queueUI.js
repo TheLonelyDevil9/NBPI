@@ -172,6 +172,7 @@ export function addPromptBox(prompt = '', variations = null, boxRefImages = unde
     const box = {
         id: generateBoxId(),
         prompt: prompt,
+        name: '',
         variations: variations !== null ? variations : stickyDefaults.variations,
         refImages: boxRefImages !== undefined ? boxRefImages :
             (stickyDefaults.refImages ? stickyDefaults.refImages.map(r => ({ ...r, id: Date.now() + Math.random() })) : null)
@@ -206,6 +207,7 @@ export function duplicatePromptBox(id) {
     const newBox = {
         id: generateBoxId(),
         prompt: source.prompt,
+        name: source.name || '',
         variations: source.variations,
         refImages: source.refImages ? source.refImages.map(r => ({ ...r, id: Date.now() + Math.random() })) : null
     };
@@ -498,6 +500,11 @@ function renderPromptBoxes() {
                     </div>
                 </div>
                 <div class="prompt-box-body">
+                    <input type="text" class="prompt-box-name"
+                        placeholder="Filename label (optional)"
+                        value="${escapeHtml(box.name || '')}"
+                        maxlength="50"
+                        oninput="updateBoxName('${box.id}', this.value)">
                     <textarea class="prompt-box-textarea"
                         placeholder="Enter your prompt..."
                         onfocus="setLastFocusedBox('${box.id}')"
@@ -555,6 +562,16 @@ export function updateBoxPrompt(id, value) {
     if (box) {
         box.prompt = value;
         updateTotalCount();
+    }
+}
+
+/**
+ * Update box name from input
+ */
+export function updateBoxName(id, value) {
+    const box = promptBoxes.find(b => b.id === id);
+    if (box) {
+        box.name = value;
     }
 }
 
@@ -648,8 +665,8 @@ export function confirmAndStartQueue() {
             console.log(`[QueueUI] Box "${box.prompt.slice(0, 20)}..." has NO refs`);
         }
 
-        // Add to queue with batch name
-        addToQueue([box.prompt], box.variations, config, boxRefs, batchName);
+        // Add to queue with batch name and per-prompt name
+        addToQueue([box.prompt], box.variations, config, boxRefs, batchName, [box.name || '']);
     }
 
     // Close modal
@@ -1040,6 +1057,7 @@ async function processBatchJson(jsonFile, dirHandle) {
         const box = {
             id: generateBoxId(),
             prompt: item.prompt,
+            name: item.name || '',
             variations: item.variations || 1,
             refImages: null
         };
@@ -1103,6 +1121,9 @@ export async function exportBatchJson() {
                 prompt: box.prompt,
                 variations: box.variations
             };
+            if (box.name && box.name.trim()) {
+                item.name = box.name.trim();
+            }
             // Note: We don't export ref image data, just indicate if custom refs were set
             if (box.refImages && box.refImages.length > 0) {
                 item.refs = box.refImages.map((_, i) => `refs/prompt_${box.id}_ref_${i}.png`);
@@ -1242,6 +1263,7 @@ export function downloadBatchTemplate() {
         prompts: [
             {
                 prompt: 'Your first prompt goes here...',
+                name: 'elf-archer',
                 variations: 2,
                 refs: ['refs/example1.png', 'refs/example2.png']
             },
@@ -1500,6 +1522,7 @@ window.selectQueueOutputDir = selectQueueOutputDir;
 window.addPromptBox = addPromptBox;
 window.removePromptBox = removePromptBox;
 window.updateBoxPrompt = updateBoxPrompt;
+window.updateBoxName = updateBoxName;
 window.setBoxVariations = setBoxVariations;
 window.openBoxRefPicker = openBoxRefPicker;
 window.clearBoxRefs = clearBoxRefs;

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased] - 2026-03-13
+
+### Added
+- **Per-Prompt Name Labels**: Optional `name` field per prompt for readable filenames
+  - Adds a "Filename label" input to each prompt box in batch setup
+  - When set, replaces the truncated prompt snippet in the filename
+  - Format: `{batchName}_{name}_{timestamp}{variation}.png`
+  - Supports batch JSON import/export (`"name": "elf-archer"`)
+  - Duplicated boxes inherit the source name
+  - Falls back to prompt snippet (first 40 chars) when no name is set
+
 ## [Unreleased] - 2026-03-12
 
 ### Added
