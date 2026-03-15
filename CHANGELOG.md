@@ -2,14 +2,9 @@
 
 ## [Unreleased] - 2026-03-15
 
-### Added
-- **Multiple Queue Entry Points**: Several new ways to add generations to the queue
-  - **+ Queue button**: Adds current prompt/config/refs to queue without starting — accumulate items, start when ready
-  - **Queue Iterate button**: Adds current image to refs then queues the prompt (right panel, next to Iterate)
-  - **Ctrl+Shift+Enter shortcut**: Add to queue from anywhere (prompt textarea or global)
-  - All new pathways accumulate without auto-starting, unlike Quick Generate
-
 ### Changed
+- **Unified queue-based generation**: All generations now go through the queue system. The "Generate" button queues and auto-starts — no more separate Quick Generate vs queue paths
+- **Simplified UI**: Removed "+ Queue", "Queue Another", "Queue Iterate", and "Cancel" buttons. Action buttons are now just: Generate, Batch Setup, Clear. Right panel: Iterate, Delete
 - **Safe Delete**: Delete button now only clears the UI display — generated image files are preserved on disk (previously permanently deleted via File System Access API with no recycle bin)
 - **API key security**: Moved API key from URL query string to `x-goog-api-key` header in all Gemini API calls (prevents exposure in browser history and network logs)
 - **Rate limit recovery**: Queue delay now resets to original value after a successful generation following rate-limit backoff (previously stayed doubled permanently)

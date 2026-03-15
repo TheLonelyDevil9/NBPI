@@ -1,9 +1,9 @@
 /**
  * Generation Module
- * Image generation orchestration
+ * Image generation orchestration — all generations go through the queue
  */
 
-import { $, showToast, haptic, playNotificationSound, updatePlaceholder, scrollToResult } from './ui.js';
+import { $, showToast, updatePlaceholder } from './ui.js';
 import { generateWithRetry, parseApiError } from './api.js';
 import { refImages, renderRefs } from './references.js';
 import { saveLastModel, persistAllInputs } from './persistence.js';
@@ -14,7 +14,6 @@ import { saveImageToFilesystem, getDirectoryInfo } from './filesystem.js';
 // Generation state
 let currentImg = null;
 let currentFilename = null;
-let abortController = null;
 
 // Cached DOM elements
 let cachedElements = null;
@@ -32,15 +31,12 @@ function getCachedElements() {
             thinkingBudget: $('thinkingBudget'),
             variations: $('variations'),
             generateBtn: $('generateBtn'),
-            cancelBtn: $('cancelBtn'),
-            spinner: $('spinner'),
             error: $('error'),
             groundingInfo: $('groundingInfo'),
             resultImg: $('resultImg'),
             imageBox: $('imageBox'),
             placeholder: $('placeholder'),
             iterateBtn: $('iterateBtn'),
-            queueIterateBtn: $('queueIterateBtn'),
             deleteBtn: $('deleteBtn')
         };
     }
@@ -65,30 +61,12 @@ export function showImageResult(imageData, filename) {
     el.placeholder.classList.add('hidden');
     el.imageBox.classList.add('has-image');
     el.iterateBtn.disabled = false;
-    el.queueIterateBtn.disabled = false;
     el.deleteBtn.disabled = false;
     resetZoom();
 }
 
-// Set generating state
-function setGenerating(on) {
-    const el = getCachedElements();
-
-    el.generateBtn.classList.toggle('hidden', on);
-    el.cancelBtn.classList.toggle('hidden', !on);
-    el.spinner.classList.toggle('hidden', !on);
-
-    if (on) {
-        el.error.classList.add('hidden');
-        el.groundingInfo.classList.add('hidden');
-        el.resultImg.classList.add('hidden');
-        el.imageBox.classList.remove('has-image', 'is-zoomed');
-        el.placeholder.classList.add('hidden');
-    }
-}
-
 /**
- * Generate a single image - reusable core function for both single and batch generation
+ * Generate a single image - reusable core function for queue processing
  */
 export async function generateSingleImage(prompt, config, refImagesData = [], signal = null) {
     // Build user message parts
@@ -182,7 +160,7 @@ function getSafetySettings() {
     return settings;
 }
 
-// Main generate function
+// Main generate function — always queues and auto-starts
 export async function generate() {
     const el = getCachedElements();
 
@@ -191,92 +169,15 @@ export async function generate() {
     if (!el.prompt.value.trim()) return showToast('Enter prompt');
 
     const variations = parseInt(el.variations?.value || 1);
+    const config = getCurrentConfig();
+    const { addToQueue, startQueue } = await import('./queue.js');
+    const { toggleQueuePanel } = await import('./queueUI.js');
 
-    // If variations > 1, use queue system
-    if (variations > 1) {
-        const config = getCurrentConfig();
-        const { addToQueue, startQueue } = await import('./queue.js');
-        const { toggleQueuePanel } = await import('./queueUI.js');
-
-        addToQueue([el.prompt.value], variations, config, refImages, '');
-        startQueue();
-        toggleQueuePanel(true);
-        showToast(`Added ${variations} variations to queue`);
-        return;
-    }
-
-    // Single generation
-    abortController = new AbortController();
-    setGenerating(true);
-
-    try {
-        const config = getCurrentConfig();
-        const result = await generateSingleImage(
-            el.prompt.value,
-            config,
-            refImages,
-            abortController.signal
-        );
-
-        currentImg = result.imageData;
-        currentFilename = null;
-        setCurrentImgRef(currentImg);
-
-        el.resultImg.src = currentImg;
-        el.resultImg.classList.remove('hidden');
-        el.placeholder.classList.add('hidden');
-        el.imageBox.classList.add('has-image');
-        el.iterateBtn.disabled = false;
-        el.queueIterateBtn.disabled = false;
-        el.deleteBtn.disabled = false;
-        resetZoom();
-
-        // Handle grounding info
-        if (result.grounding?.webSearchQueries?.length) {
-            el.groundingInfo.innerHTML = result.grounding.webSearchQueries.join(', ');
-            el.groundingInfo.classList.remove('hidden');
-        }
-
-        saveLastModel();
-
-        // Save to filesystem
-        const dirInfo = getDirectoryInfo();
-        if (dirInfo.isSet) {
-            try {
-                const saveResult = await saveImageToFilesystem(currentImg, el.prompt.value, 0);
-                currentFilename = saveResult.filename;
-            } catch (e) {
-                console.error('Filesystem save failed:', e);
-            }
-        }
-
-        playNotificationSound();
-        haptic(200);
-        showToast('Generated!');
-        scrollToResult();
-
-        // Show "Queue Another" button
-        $('queueAnotherBtn').classList.remove('hidden');
-
-    } catch (e) {
-        if (e.name === 'AbortError') {
-            showToast('Canceled');
-        } else {
-            const parsed = parseApiError(e, e.status);
-            el.error.textContent = parsed.message;
-            el.error.classList.remove('hidden');
-        }
-        el.placeholder.classList.remove('hidden');
-        updatePlaceholder('Ready to create!');
-    } finally {
-        setGenerating(false);
-        abortController = null;
-    }
-}
-
-// Cancel generation
-export function cancelGeneration() {
-    if (abortController) abortController.abort();
+    addToQueue([el.prompt.value], variations, config, refImages, '');
+    startQueue();
+    toggleQueuePanel(true);
+    saveLastModel();
+    showToast(`Generating ${variations} image${variations > 1 ? 's' : ''}...`);
 }
 
 // Iterate (add current image to references)
@@ -309,7 +210,6 @@ export function deleteCurrentImage() {
     el.error.classList.add('hidden');
     el.groundingInfo.classList.add('hidden');
     el.iterateBtn.disabled = true;
-    el.queueIterateBtn.disabled = true;
     el.deleteBtn.disabled = true;
     resetZoom();
     showToast('Cleared');
@@ -338,77 +238,16 @@ export function clearAll() {
         el.error.classList.add('hidden');
         el.groundingInfo.classList.add('hidden');
         el.iterateBtn.disabled = true;
-        el.queueIterateBtn.disabled = true;
         el.deleteBtn.disabled = true;
         resetZoom();
     }
-
-    // Hide "Queue Another" button
-    $('queueAnotherBtn').classList.add('hidden');
 
     import('./persistence.js').then(m => m.persistAllInputs());
     showToast('All cleared');
 }
 
-// Queue another generation with same settings
-export async function queueAnother() {
-    const el = getCachedElements();
-
-    if (!el.apiKey.value) return showToast('Enter API key');
-    if (!el.modelSelect.value) return showToast('Select model');
-    if (!el.prompt.value.trim()) return showToast('Enter prompt');
-
-    const variations = parseInt(el.variations?.value || 1);
-    const config = getCurrentConfig();
-    const { addToQueue, startQueue } = await import('./queue.js');
-    const { toggleQueuePanel } = await import('./queueUI.js');
-
-    addToQueue([el.prompt.value], variations, config, refImages, '');
-    startQueue();
-    toggleQueuePanel(true);
-    showToast(`Added ${variations} variation${variations > 1 ? 's' : ''} to queue`);
-}
-
-// Add current prompt to queue without starting (accumulate mode)
-export async function addCurrentToQueue() {
-    const el = getCachedElements();
-
-    if (!el.apiKey.value) return showToast('Enter API key');
-    if (!el.modelSelect.value) return showToast('Select model');
-    if (!el.prompt.value.trim()) return showToast('Enter prompt');
-
-    const variations = parseInt(el.variations?.value || 1);
-    const config = getCurrentConfig();
-    const { addToQueue, getQueueStats } = await import('./queue.js');
-
-    addToQueue([el.prompt.value], variations, config, refImages, '');
-
-    const stats = getQueueStats();
-    showToast(`Queued ${variations} image${variations > 1 ? 's' : ''} (${stats.pending} pending)`);
-}
-
-// Add current image to refs then queue the prompt (iterate + queue)
-export async function queueIteration() {
-    if (!currentImg) return;
-
-    if (refImages.length >= MAX_REFS) {
-        showToast('Maximum ' + MAX_REFS + ' reference images reached');
-        return;
-    }
-
-    refImages.push({ id: Date.now() + Math.random(), data: currentImg });
-    renderRefs();
-    persistAllInputs();
-
-    await addCurrentToQueue();
-}
-
 // Make functions globally available for HTML onclick handlers
 window.generate = generate;
-window.cancelGeneration = cancelGeneration;
 window.iterate = iterate;
 window.deleteCurrentImage = deleteCurrentImage;
 window.clearAll = clearAll;
-window.queueAnother = queueAnother;
-window.addCurrentToQueue = addCurrentToQueue;
-window.queueIteration = queueIteration;
