@@ -82,9 +82,14 @@ async function init() {
     // Aspect ratio preview
     $('ratio').addEventListener('change', updateAspectPreview);
 
-    // Ctrl+Enter to generate
+    // Ctrl+Shift+Enter to add to queue, Ctrl+Enter to generate
     $('prompt').addEventListener('keydown', e => {
-        if (e.key === 'Enter' && e.ctrlKey) generate();
+        if (e.key === 'Enter' && e.ctrlKey && e.shiftKey) {
+            e.preventDefault();
+            if (typeof window.addCurrentToQueue === 'function') window.addCurrentToQueue();
+        } else if (e.key === 'Enter' && e.ctrlKey) {
+            generate();
+        }
     });
 
     // Setup drag and drop
@@ -149,6 +154,15 @@ async function init() {
 
         // Skip other shortcuts if typing
         if (isTyping) return;
+
+        // Ctrl+Shift+Enter - Add to Queue
+        if (e.ctrlKey && e.shiftKey && e.key === 'Enter') {
+            e.preventDefault();
+            if (typeof window.addCurrentToQueue === 'function') {
+                window.addCurrentToQueue();
+            }
+            return;
+        }
 
         // Ctrl+Enter - Generate image
         if (e.ctrlKey && e.key === 'Enter') {

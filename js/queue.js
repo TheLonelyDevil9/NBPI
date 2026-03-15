@@ -32,6 +32,7 @@ let queueState = {
 
 let abortController = null;
 let onProgressCallback = null;
+let preRateLimitDelay = null; // Tracks original delay before rate-limit backoff
 
 /**
  * Generate unique ID
@@ -271,6 +272,7 @@ export function pauseQueue() {
 export async function resumeQueue() {
     if (!queueState.isRunning || !queueState.isPaused) return;
     queueState.isPaused = false;
+    abortController = new AbortController();
     persistQueueState();
     notifyProgress();
     showToast('Queue resumed');
@@ -366,6 +368,12 @@ async function processQueue() {
             item.filename = filename;
             queueState.completedCount++;
 
+            // Reset delay if it was increased by rate limiting
+            if (preRateLimitDelay !== null) {
+                queueState.delayBetweenMs = preRateLimitDelay;
+                preRateLimitDelay = null;
+            }
+
             // Show the last generated image in the right panel
             showImageResult(result.imageData, filename);
 
@@ -393,6 +401,7 @@ async function processQueue() {
             if (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit')) {
                 item.status = QueueStatus.PENDING;
                 item.startedAt = null;
+                if (preRateLimitDelay === null) preRateLimitDelay = queueState.delayBetweenMs;
                 queueState.delayBetweenMs = Math.min(queueState.delayBetweenMs * 2, 60000);
                 showToast(`Rate limited. Delay increased to ${queueState.delayBetweenMs / 1000}s`);
                 await delay(queueState.delayBetweenMs);

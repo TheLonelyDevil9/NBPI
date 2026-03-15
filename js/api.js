@@ -37,10 +37,10 @@ export function parseApiError(error, status) {
 // API Key generate content
 export async function apiKeyGenerateContent(model, body, apiKey, signal) {
     const response = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + apiKey,
+        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
         {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
             body: JSON.stringify(body),
             signal: signal
         }

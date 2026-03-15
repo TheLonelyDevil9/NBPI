@@ -265,6 +265,9 @@
         <!-- Action Buttons -->
         <div style="display:flex;gap:8px;">
           <button class="btn-primary" id="generateBtn" onclick="generate()" style="flex:1;">Quick Generate</button>
+          <button class="btn-queue" id="addToQueueBtn" onclick="addCurrentToQueue()" style="flex:1;" title="Add to queue (Ctrl+Shift+Enter)">+ Queue</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px;">
           <button class="btn-primary" id="batchBtn" onclick="handleBatchButtonClick()" style="flex:1;">Batch Setup</button>
           <button class="btn-secondary" id="clearAllBtn" onclick="clearAll()" title="Clear refs, prompt & output">Clear</button>
         </div>
@@ -310,6 +313,7 @@
         
         <div class="actions">
           <button class="btn-iterate" id="iterateBtn" onclick="iterate()" disabled>Iterate</button>
+          <button class="btn-queue btn-sm" id="queueIterateBtn" onclick="queueIteration()" disabled title="Add image as ref + queue prompt">Queue Iterate</button>
           <button class="btn-cancel" id="deleteBtn" onclick="deleteCurrentImage()" disabled>Delete</button>
         </div>
       </div>

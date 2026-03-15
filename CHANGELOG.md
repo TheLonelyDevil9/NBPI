@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] - 2026-03-15
+
+### Added
+- **Multiple Queue Entry Points**: Several new ways to add generations to the queue
+  - **+ Queue button**: Adds current prompt/config/refs to queue without starting — accumulate items, start when ready
+  - **Queue Iterate button**: Adds current image to refs then queues the prompt (right panel, next to Iterate)
+  - **Ctrl+Shift+Enter shortcut**: Add to queue from anywhere (prompt textarea or global)
+  - All new pathways accumulate without auto-starting, unlike Quick Generate
+
+### Changed
+- **Safe Delete**: Delete button now only clears the UI display — generated image files are preserved on disk (previously permanently deleted via File System Access API with no recycle bin)
+- **API key security**: Moved API key from URL query string to `x-goog-api-key` header in all Gemini API calls (prevents exposure in browser history and network logs)
+- **Rate limit recovery**: Queue delay now resets to original value after a successful generation following rate-limit backoff (previously stayed doubled permanently)
+- **AudioContext reuse**: Notification sound now reuses a single AudioContext instead of creating a new one per notification (prevents browser context limits)
+
+### Fixed
+- Removed shadowed `$` function in `getSafetySettings()` (generation.js)
+- Removed dead code branch in `clearAll()` (unreachable fallback import)
+
 ## [Unreleased] - 2026-03-14
 
 ### Added

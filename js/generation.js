@@ -9,7 +9,7 @@ import { refImages, renderRefs } from './references.js';
 import { saveLastModel, persistAllInputs } from './persistence.js';
 import { resetZoom, setCurrentImgRef } from './zoom.js';
 import { MAX_REFS } from './config.js';
-import { saveImageToFilesystem, deleteFromFilesystem, getDirectoryInfo } from './filesystem.js';
+import { saveImageToFilesystem, getDirectoryInfo } from './filesystem.js';
 
 // Generation state
 let currentImg = null;
@@ -40,6 +40,7 @@ function getCachedElements() {
             imageBox: $('imageBox'),
             placeholder: $('placeholder'),
             iterateBtn: $('iterateBtn'),
+            queueIterateBtn: $('queueIterateBtn'),
             deleteBtn: $('deleteBtn')
         };
     }
@@ -64,6 +65,7 @@ export function showImageResult(imageData, filename) {
     el.placeholder.classList.add('hidden');
     el.imageBox.classList.add('has-image');
     el.iterateBtn.disabled = false;
+    el.queueIterateBtn.disabled = false;
     el.deleteBtn.disabled = false;
     resetZoom();
 }
@@ -165,7 +167,6 @@ export function getCurrentConfig() {
 }
 
 function getSafetySettings() {
-    const $ = id => document.getElementById(id);
     const settings = [];
 
     const harassment = $('safetyHarassment')?.value;
@@ -226,6 +227,7 @@ export async function generate() {
         el.placeholder.classList.add('hidden');
         el.imageBox.classList.add('has-image');
         el.iterateBtn.disabled = false;
+        el.queueIterateBtn.disabled = false;
         el.deleteBtn.disabled = false;
         resetZoom();
 
@@ -290,15 +292,10 @@ export function iterate() {
     showToast('Added to references');
 }
 
-// Delete current image from filesystem and clear display
-export async function deleteCurrentImage() {
+// Clear current image from display (file remains on disk)
+export function deleteCurrentImage() {
     if (!currentImg) return;
     const el = getCachedElements();
-
-    // Delete from filesystem if we have a filename
-    if (currentFilename) {
-        await deleteFromFilesystem(currentFilename);
-    }
 
     // Clear display
     currentImg = null;
@@ -312,9 +309,10 @@ export async function deleteCurrentImage() {
     el.error.classList.add('hidden');
     el.groundingInfo.classList.add('hidden');
     el.iterateBtn.disabled = true;
+    el.queueIterateBtn.disabled = true;
     el.deleteBtn.disabled = true;
     resetZoom();
-    showToast('Deleted');
+    showToast('Cleared');
 }
 
 // Clear all: refs, prompt, and output
@@ -323,11 +321,6 @@ export function clearAll() {
 
     if (typeof window.clearRefsQuiet === 'function') {
         window.clearRefsQuiet();
-    } else {
-        import('./references.js').then(m => {
-            m.setRefImages([]);
-            m.renderRefs();
-        });
     }
 
     el.prompt.value = '';
@@ -345,6 +338,7 @@ export function clearAll() {
         el.error.classList.add('hidden');
         el.groundingInfo.classList.add('hidden');
         el.iterateBtn.disabled = true;
+        el.queueIterateBtn.disabled = true;
         el.deleteBtn.disabled = true;
         resetZoom();
     }
@@ -375,6 +369,40 @@ export async function queueAnother() {
     showToast(`Added ${variations} variation${variations > 1 ? 's' : ''} to queue`);
 }
 
+// Add current prompt to queue without starting (accumulate mode)
+export async function addCurrentToQueue() {
+    const el = getCachedElements();
+
+    if (!el.apiKey.value) return showToast('Enter API key');
+    if (!el.modelSelect.value) return showToast('Select model');
+    if (!el.prompt.value.trim()) return showToast('Enter prompt');
+
+    const variations = parseInt(el.variations?.value || 1);
+    const config = getCurrentConfig();
+    const { addToQueue, getQueueStats } = await import('./queue.js');
+
+    addToQueue([el.prompt.value], variations, config, refImages, '');
+
+    const stats = getQueueStats();
+    showToast(`Queued ${variations} image${variations > 1 ? 's' : ''} (${stats.pending} pending)`);
+}
+
+// Add current image to refs then queue the prompt (iterate + queue)
+export async function queueIteration() {
+    if (!currentImg) return;
+
+    if (refImages.length >= MAX_REFS) {
+        showToast('Maximum ' + MAX_REFS + ' reference images reached');
+        return;
+    }
+
+    refImages.push({ id: Date.now() + Math.random(), data: currentImg });
+    renderRefs();
+    persistAllInputs();
+
+    await addCurrentToQueue();
+}
+
 // Make functions globally available for HTML onclick handlers
 window.generate = generate;
 window.cancelGeneration = cancelGeneration;
@@ -382,3 +410,5 @@ window.iterate = iterate;
 window.deleteCurrentImage = deleteCurrentImage;
 window.clearAll = clearAll;
 window.queueAnother = queueAnother;
+window.addCurrentToQueue = addCurrentToQueue;
+window.queueIteration = queueIteration;
