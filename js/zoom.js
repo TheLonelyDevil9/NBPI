@@ -23,6 +23,21 @@ export function getCurrentImg() {
     return currentImg;
 }
 
+// Cached fullscreen DOM elements
+let fsElements = null;
+
+function getFsElements() {
+    if (!fsElements) {
+        fsElements = {
+            modal: $('fullscreenModal'),
+            container: $('fullscreenContainer'),
+            img: $('fullscreenImg'),
+            zoomLevel: $('fullscreenZoomLevel')
+        };
+    }
+    return fsElements;
+}
+
 // Reset image box to default (no zoom on main image box)
 export function resetZoom() {
     const resultImg = $('resultImg');
@@ -33,13 +48,14 @@ export function resetZoom() {
 
 // Fullscreen zoom
 function updateFullscreenZoom() {
-    $('fullscreenImg').style.transform = 'translate(' + fsPosX + 'px,' + fsPosY + 'px) scale(' + fsScale + ')';
-    $('fullscreenModal').classList.toggle('zoomed', fsScale > 1.05);
+    const fs = getFsElements();
+    fs.img.style.transform = 'translate(' + fsPosX + 'px,' + fsPosY + 'px) scale(' + fsScale + ')';
+    fs.modal.classList.toggle('zoomed', fsScale > 1.05);
     showZoomLevel();
 }
 
 function showZoomLevel() {
-    const zoomEl = $('fullscreenZoomLevel');
+    const zoomEl = getFsElements().zoomLevel;
     zoomEl.textContent = Math.round(fsScale * 100) + '%';
     zoomEl.classList.add('visible');
     clearTimeout(zoomLevelTimeout);
@@ -71,11 +87,10 @@ export function fsZoomOut() {
 
 function fsClampPos() {
     if (fsScale <= 1) { fsPosX = 0; fsPosY = 0; return; }
-    const container = $('fullscreenContainer');
-    const img = $('fullscreenImg');
-    if (!container || !img) return;
-    const containerRect = container.getBoundingClientRect();
-    const imgRect = img.getBoundingClientRect();
+    const fs = getFsElements();
+    if (!fs.container || !fs.img) return;
+    const containerRect = fs.container.getBoundingClientRect();
+    const imgRect = fs.img.getBoundingClientRect();
     const baseWidth = imgRect.width / fsScale;
     const baseHeight = imgRect.height / fsScale;
     const maxX = Math.max(0, (baseWidth * fsScale - containerRect.width) / 2);
@@ -87,20 +102,22 @@ function fsClampPos() {
 // Open fullscreen modal
 export function openFullscreen() {
     if (!currentImg) return;
-    $('fullscreenImg').src = currentImg;
-    $('fullscreenModal').classList.add('open');
+    const fs = getFsElements();
+    fs.img.src = currentImg;
+    fs.modal.classList.add('open');
     fsResetZoom();
 }
 
 export function closeFullscreen() {
-    $('fullscreenModal').classList.remove('open');
+    getFsElements().modal.classList.remove('open');
 }
 
 // Setup all zoom event handlers
 export function setupZoomHandlers() {
     const imageBox = $('imageBox');
     const resultImg = $('resultImg');
-    const fsContainer = $('fullscreenContainer');
+    const fs = getFsElements();
+    const fsContainer = fs.container;
 
     // Image box click for fullscreen (zoom only available in fullscreen modal)
     imageBox.addEventListener('click', e => {
@@ -248,7 +265,7 @@ export function setupZoomHandlers() {
 
     // Keyboard shortcuts in fullscreen
     document.addEventListener('keydown', e => {
-        if (!$('fullscreenModal').classList.contains('open')) return;
+        if (!fs.modal.classList.contains('open')) return;
         if (e.key === 'Escape') closeFullscreen();
         else if (e.key === '+' || e.key === '=') fsZoomIn();
         else if (e.key === '-') fsZoomOut();

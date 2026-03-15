@@ -202,7 +202,13 @@ export function exportProfile(name) {
         return false;
     }
 
-    const json = JSON.stringify(profile, null, 2);
+    // Strip API key from export for security
+    const exportData = JSON.parse(JSON.stringify(profile));
+    if (exportData.credentials) {
+        delete exportData.credentials.apiKey;
+    }
+
+    const json = JSON.stringify(exportData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 

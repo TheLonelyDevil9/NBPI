@@ -69,26 +69,23 @@ export async function saveRefImages() {
 }
 
 // Compress image to max size (using JPEG for smaller file size)
-export function compressImage(dataUrl) {
-    return new Promise(resolve => {
-        const img = new Image();
-        img.onload = () => {
-            let w = img.width, h = img.height;
-            if (w > MAX_REF_IMAGE_SIZE || h > MAX_REF_IMAGE_SIZE) {
-                const scale = MAX_REF_IMAGE_SIZE / Math.max(w, h);
-                w = Math.round(w * scale);
-                h = Math.round(h * scale);
-            }
-            const canvas = document.createElement('canvas');
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, w, h);
-            // Use JPEG with 0.85 quality for smaller file size
-            resolve(canvas.toDataURL('image/jpeg', 0.85));
-        };
-        img.src = dataUrl;
-    });
+export async function compressImage(dataUrl) {
+    const blob = await fetch(dataUrl).then(r => r.blob());
+    const bitmap = await createImageBitmap(blob);
+    let w = bitmap.width, h = bitmap.height;
+    if (w > MAX_REF_IMAGE_SIZE || h > MAX_REF_IMAGE_SIZE) {
+        const scale = MAX_REF_IMAGE_SIZE / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    // Use JPEG with 0.85 quality for smaller file size
+    return canvas.toDataURL('image/jpeg', 0.85);
 }
 
 // Add reference images from files

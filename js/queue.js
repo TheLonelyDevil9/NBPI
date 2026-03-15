@@ -81,9 +81,9 @@ export function addToQueue(prompts, variationsPerPrompt, config, refImagesSnapsh
                 break;
             }
 
-            // Create a copy of refs for each variation to avoid shared reference issues
+            // Refs are read-only data URLs, safe to share references
             const itemRefs = refImagesSnapshot && refImagesSnapshot.length > 0
-                ? refImagesSnapshot.map(r => ({ ...r }))
+                ? [...refImagesSnapshot]
                 : [];
 
             newItems.push({

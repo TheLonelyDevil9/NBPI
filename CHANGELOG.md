@@ -14,10 +14,16 @@
 - **API key security**: Moved API key from URL query string to `x-goog-api-key` header in all Gemini API calls (prevents exposure in browser history and network logs)
 - **Rate limit recovery**: Queue delay now resets to original value after a successful generation following rate-limit backoff (previously stayed doubled permanently)
 - **AudioContext reuse**: Notification sound now reuses a single AudioContext instead of creating a new one per notification (prevents browser context limits)
+- **Image compression**: Use `createImageBitmap()` for non-blocking image decode instead of synchronous `Image()` constructor (prevents UI freeze when adding multiple reference images)
+- **Zoom element caching**: Cached fullscreen DOM elements to avoid repeated `getElementById` calls in wheel/touch/mouse event handlers
+- **Queue ref efficiency**: Queue items now share reference image objects instead of shallow-cloning each one per variation (refs are read-only data URLs)
+- **Persistence debounce**: Increased input persistence debounce from 300ms to 1000ms (reduces unnecessary localStorage writes during typing)
+- **Profile export security**: API key is now stripped from exported profile JSON files
 
 ### Fixed
 - Removed shadowed `$` function in `getSafetySettings()` (generation.js)
 - Removed dead code branch in `clearAll()` (unreachable fallback import)
+- Model refresh button now guards against concurrent fetches (prevents spam-clicking from spawning multiple requests)
 
 ## [Unreleased] - 2026-03-14
 

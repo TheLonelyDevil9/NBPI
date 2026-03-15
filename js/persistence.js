@@ -70,7 +70,7 @@ export function restoreAllInputs() {
 
 // Setup input persistence listeners
 export function setupInputPersistence() {
-    const persist = debounce(persistAllInputs, 300);
+    const persist = debounce(persistAllInputs, 1000);
     $('prompt').addEventListener('input', persist);
     $('ratio').addEventListener('change', persist);
     $('resolution').addEventListener('change', persist);

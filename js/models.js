@@ -9,9 +9,12 @@ import { restoreLastModel } from './persistence.js';
 // Model cache with TTL
 const MODEL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 let modelCache = { data: null, timestamp: 0, key: null };
+let isRefreshing = false;
 
 // Refresh models list
 export async function refreshModels(forceRefresh = false) {
+    if (isRefreshing) return;
+
     const refreshBtn = $('refreshBtn');
     const modelStatus = $('modelStatus');
 
@@ -30,6 +33,7 @@ export async function refreshModels(forceRefresh = false) {
     }
 
     refreshBtn.classList.add('loading');
+    isRefreshing = true;
     modelStatus.textContent = 'Loading...';
     modelStatus.className = 'model-status';
 
@@ -39,6 +43,7 @@ export async function refreshModels(forceRefresh = false) {
         modelStatus.textContent = e.message.slice(0, 50);
         modelStatus.className = 'model-status error';
     } finally {
+        isRefreshing = false;
         refreshBtn.classList.remove('loading');
         restoreLastModel();
     }
