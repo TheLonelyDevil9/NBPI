@@ -451,6 +451,100 @@ input:checked+.slider:before {
     font-size: var(--font-size-md);
 }
 
+/* Saved Prompt Picker (per-box dropdown in batch modal) */
+.saved-prompt-picker {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 2px;
+    min-width: 280px;
+    max-width: 380px;
+    max-height: 250px;
+    overflow-y: auto;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-hover);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 50;
+}
+
+/* Bulk Saved Prompt Picker (overlay within batch modal) */
+.saved-prompt-bulk-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+
+.saved-prompt-bulk-picker {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-hover);
+    border-radius: var(--radius-lg);
+    width: 90%;
+    max-width: 500px;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+.saved-prompt-bulk-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-lg) var(--spacing-xl);
+    border-bottom: 1px solid var(--border-default);
+}
+
+.saved-prompt-bulk-header h4 {
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.saved-prompt-bulk-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-sm) 0;
+}
+
+.saved-prompt-bulk-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) var(--spacing-xl);
+    cursor: pointer;
+    border-bottom: 1px solid var(--bg-elevated);
+    transition: background var(--transition-fast);
+}
+
+.saved-prompt-bulk-item:hover {
+    background: var(--bg-elevated);
+}
+
+.saved-prompt-bulk-item:last-child {
+    border-bottom: none;
+}
+
+.bulk-saved-checkbox {
+    margin-top: 2px;
+    accent-color: var(--color-primary);
+}
+
+.saved-prompt-bulk-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md) var(--spacing-xl);
+    border-top: 1px solid var(--border-default);
+}
+
+.saved-prompt-bulk-count {
+    color: var(--text-muted);
+}
+
 .prompt-wrapper {
     position: relative;
 }

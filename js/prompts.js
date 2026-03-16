@@ -166,6 +166,11 @@ export function isDropdownOpen() {
     return dropdownOpen;
 }
 
+/** Get the current saved prompts array */
+export function getSavedPrompts() {
+    return savedPrompts;
+}
+
 // Render the prompts dropdown list
 function renderPromptsDropdown() {
     const list = $('savedPromptsList');

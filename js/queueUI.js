@@ -17,6 +17,7 @@ import {
 import { getCurrentConfig } from './generation.js';
 import { getDirectoryInfo, selectOutputDirectory } from './filesystem.js';
 import { refImages, compressImage } from './references.js';
+import { getSavedPrompts } from './prompts.js';
 import { MAX_REFS, DEFAULT_QUEUE_DELAY_MS } from './config.js';
 
 // Prompt boxes state
@@ -445,6 +446,183 @@ export function clearSelectedBoxRefs() {
 }
 
 /**
+ * Close all saved prompt pickers
+ */
+function closeAllSavedPromptPickers() {
+    document.querySelectorAll('.saved-prompt-picker').forEach(el => el.remove());
+}
+
+/**
+ * Open a saved prompt picker dropdown anchored to a specific prompt box
+ */
+export function openBoxSavedPromptPicker(boxId) {
+    closeAllSavedPromptPickers();
+
+    const prompts = getSavedPrompts();
+    const boxEl = document.querySelector(`[data-box-id="${boxId}"]`);
+    if (!boxEl) return;
+
+    const picker = document.createElement('div');
+    picker.className = 'saved-prompt-picker';
+
+    if (prompts.length === 0) {
+        picker.innerHTML = '<div class="dropdown-empty">No saved prompts</div>';
+    } else {
+        picker.innerHTML = prompts.map(p => {
+            const displayName = escapeHtml(p.name || p.text.slice(0, 50));
+            const subtitle = escapeHtml(p.text.length > 60 ? p.text.slice(0, 60) + '...' : p.text);
+            return `<div class="dropdown-item" onclick="fillBoxFromSaved('${boxId}', '${p.id}')">
+                <div class="dropdown-item-content">
+                    <span class="dropdown-item-name">${displayName}</span>
+                    ${p.name ? `<span class="dropdown-item-subtitle">${subtitle}</span>` : ''}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    const header = boxEl.querySelector('.prompt-box-header');
+    header.style.position = 'relative';
+    header.appendChild(picker);
+
+    // Close on outside click
+    setTimeout(() => {
+        const handler = (e) => {
+            if (!e.target.closest('.saved-prompt-picker') && !e.target.closest('[onclick*="openBoxSavedPromptPicker"]')) {
+                closeAllSavedPromptPickers();
+                document.removeEventListener('click', handler);
+            }
+        };
+        document.addEventListener('click', handler);
+    }, 0);
+}
+
+/**
+ * Fill a prompt box's textarea and name from a saved prompt
+ */
+export function fillBoxFromSaved(boxId, promptId) {
+    const prompts = getSavedPrompts();
+    const saved = prompts.find(p => p.id === promptId);
+    if (!saved) return;
+
+    const box = promptBoxes.find(b => b.id === boxId);
+    if (!box) return;
+
+    box.prompt = saved.text;
+    if (!box.name) box.name = saved.name || '';
+
+    // Update DOM directly to preserve scroll position
+    const boxEl = document.querySelector(`[data-box-id="${boxId}"]`);
+    if (boxEl) {
+        const textarea = boxEl.querySelector('.prompt-box-textarea');
+        const nameInput = boxEl.querySelector('.prompt-box-name');
+        if (textarea) textarea.value = saved.text;
+        if (nameInput && !nameInput.value) nameInput.value = saved.name || '';
+    }
+
+    closeAllSavedPromptPickers();
+    updateTotalCount();
+    showToast('Prompt loaded');
+}
+
+/**
+ * Open a multi-select overlay to create new boxes from saved prompts
+ */
+export function openBulkSavedPromptPicker() {
+    const prompts = getSavedPrompts();
+
+    if (prompts.length === 0) {
+        showToast('No saved prompts');
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'saved-prompt-bulk-overlay';
+    overlay.id = 'savedPromptBulkOverlay';
+
+    overlay.innerHTML = `
+        <div class="saved-prompt-bulk-picker">
+            <div class="saved-prompt-bulk-header">
+                <h4>Add from Saved Prompts</h4>
+                <button class="close-btn" onclick="closeBulkSavedPromptPicker()">&times;</button>
+            </div>
+            <div class="saved-prompt-bulk-list">
+                ${prompts.map(p => {
+                    const displayName = escapeHtml(p.name || p.text.slice(0, 50));
+                    const subtitle = escapeHtml(p.text.length > 80 ? p.text.slice(0, 80) + '...' : p.text);
+                    return `<label class="saved-prompt-bulk-item">
+                        <input type="checkbox" class="bulk-saved-checkbox" value="${p.id}">
+                        <div class="dropdown-item-content">
+                            <span class="dropdown-item-name">${displayName}</span>
+                            <span class="dropdown-item-subtitle">${subtitle}</span>
+                        </div>
+                    </label>`;
+                }).join('')}
+            </div>
+            <div class="saved-prompt-bulk-footer">
+                <span class="saved-prompt-bulk-count">0 selected</span>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn-secondary btn-sm" onclick="closeBulkSavedPromptPicker()">Cancel</button>
+                    <button class="btn-primary btn-sm" onclick="confirmBulkSavedPrompts()">Add Selected</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const modalContent = document.querySelector('#queueSetupModal .queue-modal-content');
+    modalContent.appendChild(overlay);
+
+    // Wire up checkbox change to update count
+    overlay.querySelectorAll('.bulk-saved-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const count = overlay.querySelectorAll('.bulk-saved-checkbox:checked').length;
+            overlay.querySelector('.saved-prompt-bulk-count').textContent = `${count} selected`;
+        });
+    });
+}
+
+/**
+ * Confirm bulk saved prompt selection and create new boxes
+ */
+export function confirmBulkSavedPrompts() {
+    const overlay = document.getElementById('savedPromptBulkOverlay');
+    if (!overlay) return;
+
+    const prompts = getSavedPrompts();
+    const checkedIds = Array.from(overlay.querySelectorAll('.bulk-saved-checkbox:checked')).map(cb => cb.value);
+
+    if (checkedIds.length === 0) {
+        showToast('Select at least one prompt');
+        return;
+    }
+
+    for (const id of checkedIds) {
+        const saved = prompts.find(p => p.id === id);
+        if (!saved) continue;
+
+        promptBoxes.push({
+            id: generateBoxId(),
+            prompt: saved.text,
+            name: saved.name || '',
+            variations: stickyDefaults.variations,
+            refImages: stickyDefaults.refImages ? stickyDefaults.refImages.map(r => ({ ...r, id: Date.now() + Math.random() })) : null
+        });
+    }
+
+    renderPromptBoxes();
+    updateTotalCount();
+    closeBulkSavedPromptPicker();
+    showToast(`Added ${checkedIds.length} prompt${checkedIds.length !== 1 ? 's' : ''}`);
+}
+
+/**
+ * Close the bulk saved prompt picker overlay
+ */
+export function closeBulkSavedPromptPicker() {
+    const overlay = document.getElementById('savedPromptBulkOverlay');
+    if (overlay) overlay.remove();
+}
+
+/**
  * Update total count display
  */
 function updateTotalCount() {
@@ -497,6 +675,7 @@ function renderPromptBoxes() {
                         <span class="prompt-box-title">Prompt ${index + 1}</span>
                     </label>
                     <div class="prompt-box-header-actions">
+                        <button class="prompt-box-action" onclick="openBoxSavedPromptPicker('${box.id}')" title="Load saved prompt">&#x1F516;</button>
                         <button class="prompt-box-action" onclick="duplicatePromptBox('${box.id}')" title="Duplicate">⧉</button>
                         <button class="prompt-box-remove" onclick="removePromptBox('${box.id}')" title="Remove">×</button>
                     </div>
@@ -1667,3 +1846,8 @@ window.toggleQueueSettings = toggleQueueSettings;
 window.applySettingsToRemaining = applySettingsToRemaining;
 window.setLastFocusedBox = setLastFocusedBox;
 window.setActiveDropTarget = setActiveDropTarget;
+window.openBoxSavedPromptPicker = openBoxSavedPromptPicker;
+window.fillBoxFromSaved = fillBoxFromSaved;
+window.openBulkSavedPromptPicker = openBulkSavedPromptPicker;
+window.confirmBulkSavedPrompts = confirmBulkSavedPrompts;
+window.closeBulkSavedPromptPicker = closeBulkSavedPromptPicker;
