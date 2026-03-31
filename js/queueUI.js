@@ -947,12 +947,23 @@ export function renderQueuePanel() {
     const startBtn = $('queueStartBtn');
     const pauseBtn = $('queuePauseBtn');
     const resumeBtn = $('queueResumeBtn');
+    const retryAllBtn = $('queueRetryAllBtn');
     const cancelBtn = $('queueCancelBtn');
 
     if (startBtn) startBtn.classList.toggle('hidden', state.isRunning);
     if (pauseBtn) pauseBtn.classList.toggle('hidden', !state.isRunning || state.isPaused);
     if (resumeBtn) resumeBtn.classList.toggle('hidden', !state.isPaused);
-    if (cancelBtn) cancelBtn.disabled = !state.isRunning && stats.total === 0;
+    if (retryAllBtn) {
+        const hasFailedItems = stats.failed > 0;
+        retryAllBtn.classList.toggle('hidden', !hasFailedItems);
+        retryAllBtn.disabled = !hasFailedItems;
+        retryAllBtn.title = hasFailedItems
+            ? state.isRunning && !state.isPaused
+                ? `Retry all ${stats.failed} failed item${stats.failed !== 1 ? 's' : ''} without interrupting the current generation`
+                : `Retry all ${stats.failed} failed item${stats.failed !== 1 ? 's' : ''}`
+            : 'No failed items to retry';
+    }
+    if (cancelBtn) cancelBtn.disabled = !state.isRunning;
 
     // Show "Edit Settings" button only when paused with pending items
     const editSettingsBtn = $('queueEditSettingsBtn');

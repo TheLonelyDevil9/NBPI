@@ -936,6 +936,8 @@ input:checked+.slider:before {
 
 .queue-controls button {
     flex: 1;
+    min-width: 0;
+    white-space: nowrap;
 }
 
 /* Queue Item List */

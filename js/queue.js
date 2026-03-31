@@ -34,6 +34,35 @@ let abortController = null;
 let onProgressCallback = null;
 let preRateLimitDelay = null; // Tracks original delay before rate-limit backoff
 
+function syncFailedCount() {
+    queueState.failedCount = queueState.items.filter(item => item.status === QueueStatus.FAILED).length;
+}
+
+function resetItemForRetry(item) {
+    item.status = QueueStatus.PENDING;
+    item.error = null;
+    item.startedAt = null;
+    item.completedAt = null;
+    item.filename = null;
+}
+
+async function restoreRefsForRetryItems(items) {
+    const itemsNeedingRefs = items.filter(item => !item.refImages || item.refImages.length === 0);
+    if (itemsNeedingRefs.length === 0) return;
+
+    try {
+        const refsMap = await loadQueueRefsMultiple(itemsNeedingRefs.map(item => item.id));
+        itemsNeedingRefs.forEach(item => {
+            if (refsMap.has(item.id)) {
+                item.refImages = refsMap.get(item.id);
+                console.log(`[Queue] Restored ${item.refImages.length} refs for retry`);
+            }
+        });
+    } catch (e) {
+        console.error('[Queue] Failed to restore refs for retry:', e);
+    }
+}
+
 /**
  * Generate unique ID
  */
@@ -170,23 +199,9 @@ export function skipQueueItem(id) {
 export async function retryQueueItem(id) {
     const item = queueState.items.find(i => i.id === id);
     if (item && (item.status === QueueStatus.FAILED || item.status === QueueStatus.CANCELLED)) {
-        // Restore refs from IndexedDB if missing (e.g., after page refresh)
-        if (!item.refImages || item.refImages.length === 0) {
-            try {
-                const refsMap = await loadQueueRefsMultiple([id]);
-                if (refsMap.has(id)) {
-                    item.refImages = refsMap.get(id);
-                    console.log(`[Queue] Restored ${item.refImages.length} refs for retry`);
-                }
-            } catch (e) {
-                console.error('[Queue] Failed to restore refs for retry:', e);
-            }
-        }
-
-        item.status = QueueStatus.PENDING;
-        item.error = null;
-        item.startedAt = null;
-        item.completedAt = null;
+        await restoreRefsForRetryItems([item]);
+        resetItemForRetry(item);
+        syncFailedCount();
         persistQueueState();
         notifyProgress();
         showToast('Item queued for retry');
@@ -196,6 +211,33 @@ export async function retryQueueItem(id) {
             startQueue();
         }
     }
+}
+
+/**
+ * Retry all failed queue items without interrupting any active generation
+ */
+export async function retryAllFailedItems() {
+    const failedItems = queueState.items.filter(item => item.status === QueueStatus.FAILED);
+
+    if (failedItems.length === 0) {
+        showToast('No failed items to retry');
+        return 0;
+    }
+
+    await restoreRefsForRetryItems(failedItems);
+    failedItems.forEach(resetItemForRetry);
+    syncFailedCount();
+    persistQueueState();
+    notifyProgress();
+
+    if (queueState.isRunning) {
+        showToast(`Re-queued ${failedItems.length} failed item${failedItems.length !== 1 ? 's' : ''}`);
+    } else {
+        showToast(`Retrying ${failedItems.length} failed item${failedItems.length !== 1 ? 's' : ''}`);
+        startQueue();
+    }
+
+    return failedItems.length;
 }
 
 /**
@@ -721,3 +763,4 @@ window.clearQueue = clearQueue;
 window.removeQueueItem = removeQueueItem;
 window.skipQueueItem = skipQueueItem;
 window.retryQueueItem = retryQueueItem;
+window.retryAllFailedItems = retryAllFailedItems;
