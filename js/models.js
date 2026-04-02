@@ -1,10 +1,15 @@
 /**
  * Models Module
- * Model loading and selection
+ * Provider-aware model loading and selection
  */
 
 import { $ } from './ui.js';
-import { restoreLastModel } from './persistence.js';
+import {
+    getCurrentProvider,
+    getProviderStorageSnapshot,
+    persistCurrentProviderState,
+    restoreProviderModelSelection
+} from './providers/index.js';
 
 // Model cache with TTL
 const MODEL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -17,17 +22,25 @@ export async function refreshModels(forceRefresh = false) {
 
     const refreshBtn = $('refreshBtn');
     const modelStatus = $('modelStatus');
+    const provider = getCurrentProvider();
+
+    if (!provider.features.modelListing) {
+        modelStatus.textContent = 'Enter a model ID manually for this provider';
+        modelStatus.className = 'model-status';
+        return;
+    }
+
+    const { apiKey } = getProviderStorageSnapshot(provider.id);
 
     // Check cache
     if (!forceRefresh) {
-        const apiKey = $('apiKey').value;
         if (modelCache.data &&
-            modelCache.key === apiKey &&
+            modelCache.key === `${provider.id}:${apiKey}` &&
             Date.now() - modelCache.timestamp < MODEL_CACHE_TTL) {
             renderModels(modelCache.data);
             modelStatus.textContent = modelCache.data.length + ' models (cached)';
             modelStatus.className = 'model-status success';
-            restoreLastModel();
+            restoreProviderModelSelection();
             return;
         }
     }
@@ -38,14 +51,14 @@ export async function refreshModels(forceRefresh = false) {
     modelStatus.className = 'model-status';
 
     try {
-        await refreshModelsAPIKey();
+        await refreshModelsForProvider(provider, apiKey);
     } catch (e) {
         modelStatus.textContent = e.message.slice(0, 50);
         modelStatus.className = 'model-status error';
     } finally {
         isRefreshing = false;
         refreshBtn.classList.remove('loading');
-        restoreLastModel();
+        restoreProviderModelSelection();
     }
 }
 
@@ -55,9 +68,7 @@ function renderModels(models) {
     modelSelect.innerHTML = models.map(id => '<option value="' + id + '">' + id + '</option>').join('');
 }
 
-// Refresh models for API Key auth
-async function refreshModelsAPIKey() {
-    const apiKey = $('apiKey').value;
+async function refreshModelsForProvider(provider, apiKey) {
     const modelStatus = $('modelStatus');
 
     if (!apiKey) {
@@ -66,25 +77,17 @@ async function refreshModelsAPIKey() {
         return;
     }
 
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
-        headers: { 'x-goog-api-key': apiKey }
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-
-    const models = (data.models || []).map(m => m.name.replace('models/', ''));
+    const models = await provider.listModels({ apiKey });
 
     // Cache the results
     modelCache = {
         data: models,
         timestamp: Date.now(),
-        key: apiKey
+        key: `${provider.id}:${apiKey}`
     };
 
     renderModels(models);
+    persistCurrentProviderState();
     modelStatus.textContent = models.length + ' models';
     modelStatus.className = 'model-status success';
 }
-
-// Make functions globally available for HTML onclick handlers
-window.refreshModels = refreshModels;

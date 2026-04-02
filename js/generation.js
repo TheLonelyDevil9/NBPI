@@ -4,12 +4,19 @@
  */
 
 import { $, showToast, updatePlaceholder } from './ui.js';
-import { generateWithRetry, parseApiError } from './api.js';
 import { refImages, renderRefs, compressImage, saveRefImages } from './references.js';
 import { saveLastModel, persistAllInputs } from './persistence.js';
 import { resetZoom, setCurrentImgRef } from './zoom.js';
 import { MAX_REFS } from './config.js';
-import { saveImageToFilesystem, getDirectoryInfo } from './filesystem.js';
+import {
+    getCurrentProvider,
+    getCurrentProviderPublicConfig,
+    getProvider,
+    getProviderExecutionConfig,
+    persistCurrentProviderState,
+    providerSupports,
+    validateCurrentProviderUi
+} from './providers/index.js';
 
 // Generation state
 let currentImg = null;
@@ -45,6 +52,13 @@ function getCachedElements() {
     return cachedElements;
 }
 
+function syncImageActionState() {
+    const el = getCachedElements();
+    el.iterateBtn.disabled = !currentImg || !providerSupports('refs');
+    el.deleteBtn.disabled = !currentImg;
+    if (el.infoBtn) el.infoBtn.disabled = !currentHistoryId;
+}
+
 // Set current image (and update zoom module)
 export function setCurrentImg(img) {
     currentImg = img;
@@ -54,8 +68,7 @@ export function setCurrentImg(img) {
 // Set/get current history ID (set by queue after saving history entry)
 export function setCurrentHistoryId(id) {
     currentHistoryId = id;
-    const el = getCachedElements();
-    if (el.infoBtn) el.infoBtn.disabled = !id;
+    syncImageActionState();
 }
 
 export function getCurrentHistoryId() {
@@ -73,9 +86,7 @@ export function showImageResult(imageData, filename) {
     el.resultImg.classList.remove('hidden');
     el.placeholder.classList.add('hidden');
     el.imageBox.classList.add('has-image');
-    el.iterateBtn.disabled = false;
-    el.deleteBtn.disabled = false;
-    if (el.infoBtn) el.infoBtn.disabled = !currentHistoryId;
+    syncImageActionState();
     resetZoom();
 }
 
@@ -83,62 +94,16 @@ export function showImageResult(imageData, filename) {
  * Generate a single image - reusable core function for queue processing
  */
 export async function generateSingleImage(prompt, config, refImagesData = [], signal = null) {
-    // Build user message parts
-    const userParts = [];
-    if (refImagesData && refImagesData.length > 0) {
-        refImagesData.forEach((img) => {
-            const match = img.data?.match(/^data:(.+);base64,(.+)$/);
-            if (match) {
-                userParts.push({ inlineData: { mimeType: match[1], data: match[2] } });
-            }
-        });
-    }
-    userParts.push({ text: prompt });
-
-    const userContent = { role: 'user', parts: userParts };
-
-    // Build generation config
-    const genConfig = { responseModalities: ['TEXT', 'IMAGE'] };
-    genConfig.imageConfig = {};
-    if (config.ratio) genConfig.imageConfig.aspectRatio = config.ratio;
-    if (config.resolution) genConfig.imageConfig.imageSize = config.resolution;
-
-    // Handle thinking config
-    if (config.thinkingBudget !== undefined) {
-        if (config.thinkingBudget === 0) {
-            genConfig.thinkingConfig = { thinkingBudget: 0 };
-        } else if (config.thinkingBudget > 0) {
-            genConfig.thinkingConfig = { thinkingBudget: config.thinkingBudget };
-        }
-    }
-
-    const body = { contents: [userContent], generationConfig: genConfig };
-
-    if (config.searchEnabled) {
-        body.tools = [{ google_search: {} }];
-    }
-
-    if (config.safetySettings && config.safetySettings.length > 0) {
-        body.safetySettings = config.safetySettings;
-    }
-
-    const data = await generateWithRetry(config.model, body, signal);
-
-    const candidate = data.candidates?.[0];
-    const contentParts = candidate?.content?.parts;
-    const imgPart = contentParts?.find(p => p.inlineData && !p.thought);
-
-    if (!imgPart) {
-        const txtPart = contentParts?.find(p => p.text);
-        throw new Error(txtPart?.text || 'No image returned');
-    }
-
-    const imageData = 'data:' + (imgPart.inlineData.mimeType || 'image/png') + ';base64,' + imgPart.inlineData.data;
-
-    return {
-        imageData,
-        grounding: candidate?.groundingMetadata
-    };
+    const provider = getProvider(config.providerId);
+    return provider.generateImage({
+        prompt,
+        config: getProviderExecutionConfig({
+            ...config,
+            refImages: refImagesData
+        }),
+        signal,
+        updateStatus: updatePlaceholder
+    });
 }
 
 /**
@@ -146,15 +111,17 @@ export async function generateSingleImage(prompt, config, refImagesData = [], si
  */
 export function getCurrentConfig() {
     const el = getCachedElements();
+    const provider = getCurrentProvider();
+
     return {
-        model: el.modelSelect.value,
+        ...getCurrentProviderPublicConfig(),
         ratio: el.ratio.value,
         resolution: el.resolution.value,
-        thinkingBudget: el.thinkingToggle.checked
+        thinkingBudget: provider.features.thinking && el.thinkingToggle.checked
             ? parseInt(el.thinkingBudget.value)
             : 0,
-        searchEnabled: el.searchToggle.checked,
-        safetySettings: getSafetySettings()
+        searchEnabled: provider.features.search ? el.searchToggle.checked : false,
+        safetySettings: provider.features.safety ? getSafetySettings() : []
     };
 }
 
@@ -177,10 +144,16 @@ function getSafetySettings() {
 // Main generate function — always queues and auto-starts
 export async function generate() {
     const el = getCachedElements();
+    const provider = getCurrentProvider();
 
-    if (!el.apiKey.value) return showToast('Enter API key');
-    if (!el.modelSelect.value) return showToast('Select model');
+    persistCurrentProviderState();
+
+    const providerError = validateCurrentProviderUi();
+    if (providerError) return showToast(providerError);
     if (!el.prompt.value.trim()) return showToast('Enter prompt');
+    if (!provider.features.refs && refImages.length > 0) {
+        return showToast(`${provider.label} does not support reference images`);
+    }
 
     const variations = parseInt(el.variations?.value || 1);
     const config = getCurrentConfig();
@@ -199,6 +172,10 @@ export async function generate() {
 export async function iterate() {
     if (!currentImg) return;
     const el = getCachedElements();
+    if (!providerSupports('refs')) {
+        showToast('Current provider does not support reference images');
+        return;
+    }
     if (refImages.length >= MAX_REFS) {
         showToast('Maximum ' + MAX_REFS + ' reference images reached');
         return;
@@ -217,7 +194,7 @@ export async function iterate() {
         console.error('Failed to add iterated image to references:', err);
         showToast('Failed to add image to references');
     } finally {
-        el.iterateBtn.disabled = !currentImg;
+        syncImageActionState();
     }
 }
 
@@ -238,9 +215,7 @@ export function deleteCurrentImage() {
     el.imageBox.classList.remove('has-image', 'is-zoomed');
     el.error.classList.add('hidden');
     el.groundingInfo.classList.add('hidden');
-    el.iterateBtn.disabled = true;
-    el.deleteBtn.disabled = true;
-    if (el.infoBtn) el.infoBtn.disabled = true;
+    syncImageActionState();
     resetZoom();
     showToast('Cleared');
 }
@@ -268,23 +243,10 @@ export function clearAll() {
         el.imageBox.classList.remove('has-image', 'is-zoomed');
         el.error.classList.add('hidden');
         el.groundingInfo.classList.add('hidden');
-        el.iterateBtn.disabled = true;
-        el.deleteBtn.disabled = true;
-        if (el.infoBtn) el.infoBtn.disabled = true;
+        syncImageActionState();
         resetZoom();
     }
 
     import('./persistence.js').then(m => m.persistAllInputs());
     showToast('All cleared');
 }
-
-// Make functions globally available for HTML onclick handlers
-window.generate = generate;
-window.iterate = iterate;
-window.deleteCurrentImage = deleteCurrentImage;
-window.clearAll = clearAll;
-window.openCurrentImageDetails = async function () {
-    if (!currentHistoryId) return;
-    const { openGenerationDetails } = await import('./queueUI.js');
-    openGenerationDetails(currentHistoryId);
-};

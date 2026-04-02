@@ -1,10 +1,10 @@
 /**
  * API Module
- * Gemini API calls with retry logic
+ * Provider-agnostic request helpers with retry logic
  */
 
 import { MAX_RETRIES, RETRY_DELAYS } from './config.js';
-import { $, updatePlaceholder } from './ui.js';
+import { updatePlaceholder } from './ui.js';
 
 // Check if error should trigger retry
 export function shouldRetry(err, status) {
@@ -34,47 +34,60 @@ export function parseApiError(error, status) {
     return { type: 'generic', message: msg };
 }
 
-// API Key generate content
-export async function apiKeyGenerateContent(model, body, apiKey, signal) {
-    const response = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-            body: JSON.stringify(body),
-            signal: signal
-        }
-    );
+export async function requestJson(url, {
+    method = 'GET',
+    headers = {},
+    body = null,
+    signal = null
+} = {}) {
+    const response = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal
+    });
 
-    const data = await response.json();
-    if (data.error) {
-        const err = new Error(data.error.message);
-        err.status = response.status;
-        throw err;
+    let data = null;
+    const contentType = response.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+        data = await response.json();
+    } else {
+        const text = await response.text();
+        data = text ? { message: text } : null;
     }
+
+    if (!response.ok || data?.error) {
+        const errorMessage = data?.error?.message || data?.message || `Request failed (${response.status})`;
+        const error = new Error(errorMessage);
+        error.status = response.status;
+        error.response = data;
+        throw error;
+    }
+
     return data;
 }
 
-// Generate content with retry logic
-export async function generateWithRetry(model, body, signal) {
-    const apiKey = $('apiKey').value;
-    let data;
-
+export async function requestJsonWithRetry({
+    request,
+    signal = null,
+    label = 'Request',
+    onAttempt = null,
+    onRetryDelay = null
+}) {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            updatePlaceholder('Generating... (Attempt ' + attempt + '/' + MAX_RETRIES + ')');
-            data = await apiKeyGenerateContent(model, body, apiKey, signal);
-            break;
-        } catch (e) {
-            if (!shouldRetry(e, e.status) || attempt === MAX_RETRIES) {
-                throw e;
+            onAttempt?.(attempt, MAX_RETRIES);
+            return await request(signal);
+        } catch (error) {
+            if (!shouldRetry(error, error.status) || attempt === MAX_RETRIES) {
+                throw error;
             }
 
-            const delay = RETRY_DELAYS[attempt - 1];
-            updatePlaceholder('Retry in ' + (delay / 1000) + 's...');
-            await new Promise(resolve => setTimeout(resolve, delay));
+            const delayMs = RETRY_DELAYS[attempt - 1];
+            onRetryDelay?.(delayMs, attempt, MAX_RETRIES);
+            updatePlaceholder(`${label} retry in ${delayMs / 1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
         }
     }
-
-    return data;
 }

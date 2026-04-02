@@ -427,11 +427,15 @@ async function processQueue() {
                     id: historyId,
                     prompt: item.prompt,
                     config: {
+                        providerId: item.config.providerId || 'gemini',
+                        providerLabel: item.config.providerLabel || 'Gemini',
                         model: item.config.model,
+                        baseUrl: item.config.baseUrl || '',
                         ratio: item.config.ratio,
                         resolution: item.config.resolution,
                         thinkingBudget: item.config.thinkingBudget,
-                        searchEnabled: item.config.searchEnabled
+                        searchEnabled: item.config.searchEnabled,
+                        safetySettings: item.config.safetySettings || []
                     },
                     refImages: item.refImages || [],
                     filename: filename,
@@ -753,14 +757,3 @@ export function updateQueueItemConfig(newConfig) {
     }
     return count;
 }
-
-// Make functions globally available
-window.startQueue = startQueue;
-window.pauseQueue = pauseQueue;
-window.resumeQueue = resumeQueue;
-window.cancelQueue = cancelQueue;
-window.clearQueue = clearQueue;
-window.removeQueueItem = removeQueueItem;
-window.skipQueueItem = skipQueueItem;
-window.retryQueueItem = retryQueueItem;
-window.retryAllFailedItems = retryAllFailedItems;

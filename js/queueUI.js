@@ -5,21 +5,19 @@
 
 import { $, showToast } from './ui.js';
 import {
-    getQueueState,
-    getQueueStats,
-    getQueueETA,
     addToQueue,
+    getQueueState,
     setOnProgress,
-    setQueueDelay,
-    QueueStatus,
-    updateQueueItemConfig
+    setQueueDelay
 } from './queue.js';
 import { getCurrentConfig } from './generation.js';
-import { getDirectoryInfo, selectOutputDirectory } from './filesystem.js';
+import { getDirectoryInfo, pickDirectoryHandle, pickFileHandle, selectOutputDirectory } from './filesystem.js';
 import { refImages, compressImage } from './references.js';
 import { getSavedPrompts } from './prompts.js';
 import { MAX_REFS, DEFAULT_QUEUE_DELAY_MS } from './config.js';
-import { loadHistoryEntry, loadRecentHistory, deleteHistoryEntry } from './history.js';
+import { getCurrentProvider, providerSupports } from './providers/index.js';
+import { initQueuePanelUI, renderQueuePanel, toggleQueuePanel, updateQueueFab } from './queuePanel.js';
+import { initQueueHistoryUI, openGenerationDetails, toggleHistoryPanel } from './queueHistory.js';
 
 // Prompt boxes state
 let promptBoxes = [];
@@ -41,26 +39,122 @@ let stickyDefaults = {
  * Initialize queue UI
  */
 export function initQueueUI() {
-    // Set up progress callback to update both panel and FAB
+    initQueuePanelUI();
+    initQueueHistoryUI();
+
     setOnProgress(() => {
         renderQueuePanel();
         updateQueueFab();
     });
 
-    // Initial FAB state
     updateQueueFab();
 
-    // Set up box ref input handler
     const boxRefInput = $('boxRefInput');
     if (boxRefInput) {
         boxRefInput.addEventListener('change', handleBoxRefInput);
     }
 
+    bindQueueSetupControls();
+    setupPromptBoxDelegation();
     setupBoxDropZoneDelegation();
+    window.addEventListener('nbpi:provider-change', refreshQueueProviderUi);
 
-    // Initial render
     renderQueuePanel();
     updateDirectoryDisplay();
+}
+
+function bindQueueSetupControls() {
+    $('selectAllBoxesBtn')?.addEventListener('click', selectAllBoxes);
+    $('downloadBatchTemplateBtn')?.addEventListener('click', downloadBatchTemplate);
+    $('importBatchFileBtn')?.addEventListener('click', importBatchFile);
+    $('importBatchFolderBtn')?.addEventListener('click', importBatchFolder);
+    $('exportBatchJsonBtn')?.addEventListener('click', exportBatchJson);
+    $('openBulkSavedPromptPickerBtn')?.addEventListener('click', openBulkSavedPromptPicker);
+    $('closeQueueSetupBtn')?.addEventListener('click', closeQueueSetup);
+    $('addPromptBoxBtn')?.addEventListener('click', () => addPromptBox());
+    $('selectQueueOutputDirBtn')?.addEventListener('click', selectQueueOutputDir);
+    $('cancelQueueSetupBtn')?.addEventListener('click', closeQueueSetup);
+    $('startQueueBtn')?.addEventListener('click', confirmAndStartQueue);
+}
+
+function setupPromptBoxDelegation() {
+    const container = $('promptBoxesContainer');
+    if (!container || container.dataset.promptDelegationSetup === 'true') return;
+
+    container.addEventListener('click', event => {
+        const actionTarget = event.target.closest('[data-prompt-action]');
+        if (!actionTarget) return;
+
+        const { promptAction, boxId, refId, variation } = actionTarget.dataset;
+
+        if (promptAction === 'open-saved-picker') {
+            openBoxSavedPromptPicker(boxId);
+        } else if (promptAction === 'duplicate') {
+            duplicatePromptBox(boxId);
+        } else if (promptAction === 'remove') {
+            removePromptBox(boxId);
+        } else if (promptAction === 'remove-ref') {
+            event.stopPropagation();
+            removeBoxRef(boxId, Number(refId));
+        } else if (promptAction === 'open-ref-picker') {
+            event.stopPropagation();
+            openBoxRefPicker(boxId);
+        } else if (promptAction === 'clear-refs') {
+            event.stopPropagation();
+            clearBoxRefs(boxId);
+        } else if (promptAction === 'set-variation') {
+            setBoxVariations(boxId, Number(variation));
+        }
+    });
+
+    container.addEventListener('input', event => {
+        const target = event.target;
+        const boxElement = target.closest('.prompt-box');
+        const boxId = boxElement?.dataset.boxId;
+        if (!boxId) return;
+
+        if (target.classList.contains('prompt-box-name')) {
+            updateBoxName(boxId, target.value);
+        } else if (target.classList.contains('prompt-box-textarea')) {
+            updateBoxPrompt(boxId, target.value);
+        }
+    });
+
+    container.addEventListener('change', event => {
+        const checkbox = event.target.closest('.box-select-checkbox');
+        if (!checkbox) return;
+        const boxId = checkbox.closest('.prompt-box')?.dataset.boxId;
+        if (!boxId) return;
+        toggleBoxSelection(boxId, checkbox.checked);
+    });
+
+    container.addEventListener('focusin', event => {
+        const textarea = event.target.closest('.prompt-box-textarea');
+        if (!textarea) return;
+        const boxId = textarea.closest('.prompt-box')?.dataset.boxId;
+        if (boxId) {
+            setActiveDropTarget(boxId);
+        }
+    });
+
+    container.dataset.promptDelegationSetup = 'true';
+}
+
+function refreshQueueProviderUi() {
+    if ($('queueSetupModal')?.classList.contains('open')) {
+        renderPromptBoxes();
+        const useGlobalRefs = $('useGlobalRefs');
+        if (useGlobalRefs) {
+            const supportsRefs = providerSupports('refs');
+            useGlobalRefs.disabled = !supportsRefs || refImages.length === 0;
+        }
+        const note = $('queueRefsProviderNote');
+        if (note) {
+            const provider = getCurrentProvider();
+            note.textContent = `${provider.label} does not support reference images in batch mode.`;
+            note.classList.toggle('hidden', provider.features.refs);
+        }
+    }
 }
 
 // Drag state
@@ -261,6 +355,11 @@ export function setBoxVariations(id, variations) {
  * Open file picker for box refs
  */
 export function openBoxRefPicker(boxId) {
+    if (!providerSupports('refs')) {
+        showToast('Current provider does not support reference images');
+        return;
+    }
+
     currentBoxForRefs = boxId;
     lastFocusedBoxId = boxId;
     const input = $('boxRefInput');
@@ -274,6 +373,12 @@ export function openBoxRefPicker(boxId) {
  * Handle box ref file input
  */
 async function handleBoxRefInput(e) {
+    if (!providerSupports('refs')) {
+        showToast('Current provider does not support reference images');
+        e.target.value = '';
+        return;
+    }
+
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
@@ -403,6 +508,10 @@ export function deselectAllBoxes() {
  * Open file picker for bulk ref add (add to all selected boxes)
  */
 export function openBulkRefPicker() {
+    if (!providerSupports('refs')) {
+        showToast('Current provider does not support reference images');
+        return;
+    }
     if (selectedBoxIds.size === 0) {
         showToast('Select prompts first');
         return;
@@ -431,10 +540,23 @@ function renderBulkActionsBar() {
     container.classList.add('visible');
     container.innerHTML = `
         <span class="bulk-selection-count">${count} selected</span>
-        <button class="btn-secondary btn-sm" onclick="openBulkRefPicker()">Add Refs to Selected</button>
-        <button class="btn-secondary btn-sm" onclick="clearSelectedBoxRefs()">Clear Refs from Selected</button>
-        <button class="btn-secondary btn-sm" onclick="deselectAllBoxes()">Deselect All</button>
+        <button class="btn-secondary btn-sm" data-bulk-action="add-refs">Add Refs to Selected</button>
+        <button class="btn-secondary btn-sm" data-bulk-action="clear-refs">Clear Refs from Selected</button>
+        <button class="btn-secondary btn-sm" data-bulk-action="deselect-all">Deselect All</button>
     `;
+
+    container.onclick = event => {
+        const button = event.target.closest('[data-bulk-action]');
+        if (!button) return;
+
+        if (button.dataset.bulkAction === 'add-refs') {
+            openBulkRefPicker();
+        } else if (button.dataset.bulkAction === 'clear-refs') {
+            clearSelectedBoxRefs();
+        } else if (button.dataset.bulkAction === 'deselect-all') {
+            deselectAllBoxes();
+        }
+    };
 }
 
 /**
@@ -474,7 +596,7 @@ export function openBoxSavedPromptPicker(boxId) {
         picker.innerHTML = prompts.map(p => {
             const displayName = escapeHtml(p.name || p.text.slice(0, 50));
             const subtitle = escapeHtml(p.text.length > 60 ? p.text.slice(0, 60) + '...' : p.text);
-            return `<div class="dropdown-item" onclick="fillBoxFromSaved('${boxId}', '${p.id}')">
+            return `<div class="dropdown-item" data-saved-prompt-id="${p.id}">
                 <div class="dropdown-item-content">
                     <span class="dropdown-item-name">${displayName}</span>
                     ${p.name ? `<span class="dropdown-item-subtitle">${subtitle}</span>` : ''}
@@ -486,11 +608,17 @@ export function openBoxSavedPromptPicker(boxId) {
     const header = boxEl.querySelector('.prompt-box-header');
     header.style.position = 'relative';
     header.appendChild(picker);
+    picker.addEventListener('click', event => {
+        const item = event.target.closest('[data-saved-prompt-id]');
+        if (item) {
+            fillBoxFromSaved(boxId, item.dataset.savedPromptId);
+        }
+    });
 
     // Close on outside click
     setTimeout(() => {
         const handler = (e) => {
-            if (!e.target.closest('.saved-prompt-picker') && !e.target.closest('[onclick*="openBoxSavedPromptPicker"]')) {
+            if (!e.target.closest('.saved-prompt-picker') && !e.target.closest('[data-prompt-action="open-saved-picker"]')) {
                 closeAllSavedPromptPickers();
                 document.removeEventListener('click', handler);
             }
@@ -546,7 +674,7 @@ export function openBulkSavedPromptPicker() {
         <div class="saved-prompt-bulk-picker">
             <div class="saved-prompt-bulk-header">
                 <h4>Add from Saved Prompts</h4>
-                <button class="close-btn" onclick="closeBulkSavedPromptPicker()">&times;</button>
+                <button class="close-btn" id="closeBulkSavedPromptPickerBtn">&times;</button>
             </div>
             <div class="saved-prompt-bulk-list">
                 ${prompts.map(p => {
@@ -564,8 +692,8 @@ export function openBulkSavedPromptPicker() {
             <div class="saved-prompt-bulk-footer">
                 <span class="saved-prompt-bulk-count">0 selected</span>
                 <div style="display:flex;gap:8px;">
-                    <button class="btn-secondary btn-sm" onclick="closeBulkSavedPromptPicker()">Cancel</button>
-                    <button class="btn-primary btn-sm" onclick="confirmBulkSavedPrompts()">Add Selected</button>
+                    <button class="btn-secondary btn-sm" id="cancelBulkSavedPromptPickerBtn">Cancel</button>
+                    <button class="btn-primary btn-sm" id="confirmBulkSavedPromptsBtn">Add Selected</button>
                 </div>
             </div>
         </div>
@@ -581,6 +709,9 @@ export function openBulkSavedPromptPicker() {
             overlay.querySelector('.saved-prompt-bulk-count').textContent = `${count} selected`;
         });
     });
+    overlay.querySelector('#closeBulkSavedPromptPickerBtn')?.addEventListener('click', closeBulkSavedPromptPicker);
+    overlay.querySelector('#cancelBulkSavedPromptPickerBtn')?.addEventListener('click', closeBulkSavedPromptPicker);
+    overlay.querySelector('#confirmBulkSavedPromptsBtn')?.addEventListener('click', confirmBulkSavedPrompts);
 }
 
 /**
@@ -661,6 +792,8 @@ function renderPromptBoxes() {
     }
 
     const needsDragSetup = !container.dataset.dragSetup;
+    const supportsRefs = providerSupports('refs');
+    const provider = getCurrentProvider();
 
     container.innerHTML = promptBoxes.map((box, index) => {
         const hasCustomRefs = box.refImages && box.refImages.length > 0;
@@ -672,39 +805,36 @@ function renderPromptBoxes() {
                 <div class="prompt-box-header">
                     <div class="prompt-box-drag-handle" title="Drag to reorder">⋮⋮</div>
                     <label class="box-select-label">
-                        <input type="checkbox" class="box-select-checkbox"
-                            ${isSelected ? 'checked' : ''}
-                            onchange="toggleBoxSelection('${box.id}', this.checked)">
+                        <input type="checkbox" class="box-select-checkbox" name="selectedPromptBox"
+                            ${isSelected ? 'checked' : ''}>
                         <span class="prompt-box-title">Prompt ${index + 1}</span>
                     </label>
                     <div class="prompt-box-header-actions">
-                        <button class="prompt-box-action" onclick="openBoxSavedPromptPicker('${box.id}')" title="Load saved prompt">&#x1F516;</button>
-                        <button class="prompt-box-action" onclick="duplicatePromptBox('${box.id}')" title="Duplicate">⧉</button>
-                        <button class="prompt-box-remove" onclick="removePromptBox('${box.id}')" title="Remove">×</button>
+                        <button class="prompt-box-action" data-prompt-action="open-saved-picker" data-box-id="${box.id}" title="Load saved prompt">&#x1F516;</button>
+                        <button class="prompt-box-action" data-prompt-action="duplicate" data-box-id="${box.id}" title="Duplicate">⧉</button>
+                        <button class="prompt-box-remove" data-prompt-action="remove" data-box-id="${box.id}" title="Remove">×</button>
                     </div>
                 </div>
                 <div class="prompt-box-body">
-                    <input type="text" class="prompt-box-name"
+                    <input type="text" class="prompt-box-name" name="promptBoxName"
                         placeholder="Filename label (optional)"
                         value="${escapeHtml(box.name || '')}"
-                        maxlength="50"
-                        oninput="updateBoxName('${box.id}', this.value)">
-                    <textarea class="prompt-box-textarea"
-                        placeholder="Enter your prompt..."
-                        onfocus="setActiveDropTarget('${box.id}')"
-                        oninput="updateBoxPrompt('${box.id}', this.value)">${escapeHtml(box.prompt)}</textarea>
-                    <div class="box-drop-zone ${isPasteTarget ? 'paste-target' : ''}" data-box-id="${box.id}">
-                        ${hasCustomRefs ? `
+                        maxlength="50">
+                    <textarea class="prompt-box-textarea" name="promptBoxPrompt" placeholder="Enter your prompt...">${escapeHtml(box.prompt)}</textarea>
+                    <div class="box-drop-zone ${isPasteTarget ? 'paste-target' : ''} ${supportsRefs ? '' : 'provider-unsupported'}" data-box-id="${box.id}">
+                        ${supportsRefs && hasCustomRefs ? `
                             ${box.refImages.map(ref => `
                                 <div class="box-drop-zone-ref">
                                     <img src="${ref.data}" title="Reference image">
-                                    <button class="box-ref-remove" onclick="event.stopPropagation(); removeBoxRef('${box.id}', ${ref.id})" title="Remove">&times;</button>
+                                    <button class="box-ref-remove" data-prompt-action="remove-ref" data-box-id="${box.id}" data-ref-id="${ref.id}" title="Remove">&times;</button>
                                 </div>
                             `).join('')}
-                            ${box.refImages.length < MAX_REFS ? `<button class="box-drop-zone-add" onclick="event.stopPropagation(); openBoxRefPicker('${box.id}')" title="Add more">+</button>` : ''}
-                            <button class="box-drop-zone-clear" onclick="event.stopPropagation(); clearBoxRefs('${box.id}')" title="Clear all refs">Clear</button>
-                        ` : `
+                            ${box.refImages.length < MAX_REFS ? `<button class="box-drop-zone-add" data-prompt-action="open-ref-picker" data-box-id="${box.id}" title="Add more">+</button>` : ''}
+                            <button class="box-drop-zone-clear" data-prompt-action="clear-refs" data-box-id="${box.id}" title="Clear all refs">Clear</button>
+                        ` : supportsRefs ? `
                             <span class="box-drop-zone-placeholder">Drop, paste, or click to add reference images</span>
+                        ` : `
+                            <span class="box-drop-zone-placeholder">${provider.label} does not support reference images</span>
                         `}
                     </div>
                 </div>
@@ -714,12 +844,13 @@ function renderPromptBoxes() {
                         <div class="variation-btns">
                             ${[1, 2, 3, 4, 5].map(v => `
                                 <button class="variation-btn ${box.variations === v ? 'active' : ''}"
-                                    data-val="${v}"
-                                    onclick="setBoxVariations('${box.id}', ${v})">${v}</button>
+                                    data-prompt-action="set-variation"
+                                    data-box-id="${box.id}"
+                                    data-variation="${v}">${v}</button>
                             `).join('')}
                         </div>
                     </div>
-                    ${!hasCustomRefs ? `<span class="prompt-box-refs-info">Using global refs if enabled</span>` : ''}
+                    ${supportsRefs && !hasCustomRefs ? `<span class="prompt-box-refs-info">Using global refs if enabled</span>` : ''}
                 </div>
             </div>
         `;
@@ -777,13 +908,22 @@ export function openQueueSetup() {
         const useGlobalRefs = $('useGlobalRefs');
         if (globalRefsInfo && useGlobalRefs) {
             const hasRefs = refImages.length > 0;
+            const supportsRefs = providerSupports('refs');
             globalRefsInfo.textContent = hasRefs ? `(${refImages.length} images)` : '(none)';
-            useGlobalRefs.disabled = !hasRefs;
-            useGlobalRefs.checked = hasRefs;
+            useGlobalRefs.disabled = !supportsRefs || !hasRefs;
+            useGlobalRefs.checked = supportsRefs && hasRefs;
+        }
+
+        const queueRefsProviderNote = $('queueRefsProviderNote');
+        if (queueRefsProviderNote) {
+            const provider = getCurrentProvider();
+            queueRefsProviderNote.textContent = `${provider.label} does not support reference images in batch mode.`;
+            queueRefsProviderNote.classList.toggle('hidden', provider.features.refs);
         }
 
         updateDirectoryDisplay();
         updateTotalCount();
+        updateQueueFab();
     }
 }
 
@@ -795,6 +935,8 @@ export function closeQueueSetup() {
     if (modal) {
         modal.classList.remove('open');
     }
+    closeAllSavedPromptPickers();
+    closeBulkSavedPromptPicker();
     // Reset sticky defaults and selection when closing modal
     stickyDefaults = { variations: 1, refImages: null };
     selectedBoxIds.clear();
@@ -804,6 +946,7 @@ export function closeQueueSetup() {
     if (batchNameInput) {
         batchNameInput.value = '';
     }
+    updateQueueFab();
 }
 
 /**
@@ -813,6 +956,7 @@ export function confirmAndStartQueue() {
     const delaySelect = $('queueDelaySelect');
     const useGlobalRefs = $('useGlobalRefs');
     const batchNameInput = $('batchNameInput');
+    const provider = getCurrentProvider();
 
     // Filter to only boxes with prompts
     const validBoxes = promptBoxes.filter(box => box.prompt.trim().length > 0);
@@ -826,6 +970,14 @@ export function confirmAndStartQueue() {
     const shouldUseGlobalRefs = useGlobalRefs?.checked && refImages.length > 0;
     const batchName = batchNameInput?.value?.trim() || '';
 
+    if (!provider.features.refs) {
+        const hasBoxRefs = validBoxes.some(box => box.refImages?.length > 0);
+        if (shouldUseGlobalRefs || hasBoxRefs) {
+            showToast(`${provider.label} does not support reference images`);
+            return;
+        }
+    }
+
     console.log(`[QueueUI] Starting batch: ${validBoxes.length} prompts, globalRefs: ${shouldUseGlobalRefs}, global ref count: ${refImages.length}, batchName: "${batchName}"`);
 
     // Get current config from main page
@@ -838,10 +990,10 @@ export function confirmAndStartQueue() {
     for (const box of validBoxes) {
         // Determine which refs to use
         let boxRefs = [];
-        if (box.refImages && box.refImages.length > 0) {
+        if (provider.features.refs && box.refImages && box.refImages.length > 0) {
             boxRefs = [...box.refImages];
             console.log(`[QueueUI] Box "${box.prompt.slice(0, 20)}..." has ${box.refImages.length} custom refs`);
-        } else if (shouldUseGlobalRefs) {
+        } else if (provider.features.refs && shouldUseGlobalRefs) {
             boxRefs = [...refImages];
             console.log(`[QueueUI] Box "${box.prompt.slice(0, 20)}..." using ${refImages.length} global refs`);
         } else {
@@ -863,176 +1015,6 @@ export function confirmAndStartQueue() {
 
     // Auto-start
     import('./queue.js').then(m => m.startQueue());
-}
-
-/**
- * Toggle queue panel visibility
- */
-export function toggleQueuePanel(forceOpen = null) {
-    const panel = $('queuePanel');
-    const overlay = $('queueOverlay');
-    const fab = $('queueFab');
-
-    if (!panel) return;
-
-    const shouldOpen = forceOpen !== null ? forceOpen : !panel.classList.contains('open');
-
-    panel.classList.toggle('open', shouldOpen);
-    if (overlay) {
-        overlay.classList.toggle('open', shouldOpen);
-    }
-
-    // Hide FAB when panel is open to avoid overlap
-    if (fab) {
-        fab.classList.toggle('hidden', shouldOpen);
-    }
-
-    if (shouldOpen) {
-        renderQueuePanel();
-    }
-}
-
-/**
- * Render queue panel content
- */
-export function renderQueuePanel() {
-    const state = getQueueState();
-    const stats = getQueueStats();
-    const eta = getQueueETA();
-
-    // Update progress bar
-    const progressBar = $('queueProgressBar');
-    if (progressBar) {
-        progressBar.style.width = stats.percentComplete + '%';
-    }
-
-    // Update progress text
-    const progressText = $('queueProgressText');
-    if (progressText) {
-        if (stats.total === 0) {
-            progressText.textContent = 'No items';
-        } else {
-            let text = `${stats.completed}/${stats.total} completed`;
-            if (stats.failed > 0) {
-                text += ` • ${stats.failed} failed`;
-            }
-            // Add ETA if queue is running and has pending items
-            if (state.isRunning && !state.isPaused && eta.totalMs > 0) {
-                text += ` • ${eta.formatted} remaining`;
-            }
-            progressText.textContent = text;
-        }
-    }
-
-    // Update status
-    const statusEl = $('queueStatus');
-    if (statusEl) {
-        const currentItem = state.items.find(i => i.status === QueueStatus.GENERATING);
-
-        if (state.isRunning && !state.isPaused && currentItem) {
-            const promptSnippet = currentItem.prompt.slice(0, 30);
-            statusEl.textContent = `Generating: "${promptSnippet}..." (${currentItem.variationIndex + 1}/${currentItem.totalVariations})`;
-        } else if (state.isPaused) {
-            statusEl.textContent = 'Paused';
-        } else if (stats.pending > 0) {
-            statusEl.textContent = `${stats.pending} items pending`;
-        } else if (stats.total > 0) {
-            statusEl.textContent = 'Complete';
-        } else {
-            statusEl.textContent = 'Queue empty';
-        }
-    }
-
-    // Update control buttons
-    const startBtn = $('queueStartBtn');
-    const pauseBtn = $('queuePauseBtn');
-    const resumeBtn = $('queueResumeBtn');
-    const retryAllBtn = $('queueRetryAllBtn');
-    const cancelBtn = $('queueCancelBtn');
-
-    if (startBtn) startBtn.classList.toggle('hidden', state.isRunning);
-    if (pauseBtn) pauseBtn.classList.toggle('hidden', !state.isRunning || state.isPaused);
-    if (resumeBtn) resumeBtn.classList.toggle('hidden', !state.isPaused);
-    if (retryAllBtn) {
-        const hasFailedItems = stats.failed > 0;
-        retryAllBtn.classList.toggle('hidden', !hasFailedItems);
-        retryAllBtn.disabled = !hasFailedItems;
-        retryAllBtn.title = hasFailedItems
-            ? state.isRunning && !state.isPaused
-                ? `Retry all ${stats.failed} failed item${stats.failed !== 1 ? 's' : ''} without interrupting the current generation`
-                : `Retry all ${stats.failed} failed item${stats.failed !== 1 ? 's' : ''}`
-            : 'No failed items to retry';
-    }
-    if (cancelBtn) cancelBtn.disabled = !state.isRunning;
-
-    // Show "Edit Settings" button only when paused with pending items
-    const editSettingsBtn = $('queueEditSettingsBtn');
-    if (editSettingsBtn) {
-        editSettingsBtn.classList.toggle('hidden', !(state.isPaused && stats.pending > 0));
-    }
-
-    // Hide settings panel if queue is no longer paused
-    if (!state.isPaused) {
-        const settingsPanel = $('queueSettingsOverride');
-        if (settingsPanel) settingsPanel.classList.add('hidden');
-    }
-
-    // Render item list
-    renderQueueItemList(state.items);
-}
-
-/**
- * Render queue item list
- */
-function renderQueueItemList(items) {
-    const list = $('queueItemList');
-    if (!list) return;
-
-    if (items.length === 0) {
-        list.innerHTML = '<div class="queue-empty">No items in queue</div>';
-        return;
-    }
-
-    list.innerHTML = items.map(item => `
-        <div class="queue-item queue-item-${item.status}" data-id="${item.id}">
-            <div class="queue-item-status">
-                ${getStatusIcon(item.status)}
-            </div>
-            <div class="queue-item-info">
-                <div class="queue-item-prompt">${escapeHtml(item.prompt.slice(0, 40))}${item.prompt.length > 40 ? '...' : ''}</div>
-                <div class="queue-item-meta">
-                    v${item.variationIndex + 1}/${item.totalVariations}
-                    ${item.error ? `<span class="queue-error-text">${escapeHtml(item.error)}</span>` : ''}
-                </div>
-            </div>
-            <div class="queue-item-actions">
-                ${item.status === 'pending' ? `
-                    <button class="queue-item-btn skip-btn" onclick="skipQueueItem('${item.id}')" title="Skip this item">Skip</button>
-                    <button class="queue-item-remove" onclick="removeQueueItem('${item.id}')" title="Remove from queue">×</button>
-                ` : ''}
-                ${item.status === 'failed' || item.status === 'cancelled' ? `
-                    <button class="queue-item-btn retry-btn" onclick="retryQueueItem('${item.id}')" title="Retry this item">Retry</button>
-                ` : ''}
-                ${item.status === 'completed' && item.historyId ? `
-                    <button class="queue-item-btn info-btn" onclick="openGenerationDetails('${item.historyId}')" title="View generation details">Info</button>
-                ` : ''}
-            </div>
-        </div>
-    `).join('');
-}
-
-/**
- * Get status icon for queue item
- */
-function getStatusIcon(status) {
-    switch (status) {
-        case QueueStatus.PENDING: return '⏳';
-        case QueueStatus.GENERATING: return '<div class="mini-spinner"></div>';
-        case QueueStatus.COMPLETED: return '✓';
-        case QueueStatus.FAILED: return '✗';
-        case QueueStatus.CANCELLED: return '⊘';
-        default: return '';
-    }
 }
 
 /**
@@ -1086,7 +1068,8 @@ export async function selectQueueOutputDir() {
  */
 export async function importBatchFolder() {
     try {
-        const dirHandle = await window.showDirectoryPicker();
+        const dirHandle = await pickDirectoryHandle();
+        if (!dirHandle) return;
 
         // Look for batch.json
         let jsonHandle;
@@ -1114,13 +1097,14 @@ export async function importBatchFolder() {
  */
 export async function importBatchFile() {
     try {
-        const [fileHandle] = await window.showOpenFilePicker({
+        const fileHandle = await pickFileHandle({
             types: [{
                 description: 'JSON Files',
                 accept: { 'application/json': ['.json'] }
             }],
             multiple: false
         });
+        if (!fileHandle) return;
 
         const file = await fileHandle.getFile();
         await processBatchJson(file, null);
@@ -1498,154 +1482,6 @@ export function handleBatchButtonClick() {
 }
 
 /**
- * Update the floating queue indicator (FAB)
- */
-export function updateQueueFab() {
-    const fab = $('queueFab');
-    const fabText = $('queueFabText');
-    const fabProgress = $('queueFabProgress');
-
-    if (!fab) return;
-
-    const state = getQueueState();
-    const stats = getQueueStats();
-
-    // Show/hide FAB based on queue state
-    const shouldShow = state.isRunning || stats.total > 0;
-    fab.classList.toggle('hidden', !shouldShow);
-
-    if (!shouldShow) return;
-
-    // Determine if queue just finished (not running, nothing pending/generating)
-    const isComplete = !state.isRunning && !state.isPaused && stats.pending === 0 && stats.inProgress === 0;
-
-    // Update text — show checkmark when done, failure count if only failures remain, counter when active
-    if (fabText) {
-        if (isComplete && stats.failed > 0 && stats.completed === 0) {
-            fabText.textContent = `${stats.failed}✗`;
-        } else if (isComplete) {
-            fabText.textContent = '✓';
-        } else {
-            fabText.textContent = `${stats.completed}/${stats.total}`;
-        }
-    }
-
-    // Update progress bar
-    if (fabProgress) {
-        fabProgress.style.height = stats.percentComplete + '%';
-    }
-
-    // Add/remove generating animation
-    fab.classList.toggle('generating', state.isRunning && !state.isPaused);
-    fab.classList.toggle('complete', isComplete);
-}
-
-/**
- * Toggle the inline settings override panel and populate from first pending item
- */
-export function toggleQueueSettings() {
-    const panel = $('queueSettingsOverride');
-    if (!panel) return;
-
-    const isHidden = panel.classList.contains('hidden');
-    panel.classList.toggle('hidden');
-
-    // Populate from first pending item's config when opening
-    if (isHidden) {
-        const state = getQueueState();
-        const firstPending = state.items.find(i => i.status === QueueStatus.PENDING);
-        if (firstPending && firstPending.config) {
-            const c = firstPending.config;
-            const qRatio = $('queueRatio');
-            const qRes = $('queueResolution');
-            const qThinking = $('queueThinking');
-            const qSearch = $('queueSearch');
-
-            if (qRatio) qRatio.value = c.ratio || '';
-            if (qRes) qRes.value = c.resolution || '2K';
-            if (qThinking) {
-                // Find closest option
-                const budget = c.thinkingBudget !== undefined ? c.thinkingBudget : -1;
-                const options = Array.from(qThinking.options).map(o => parseInt(o.value));
-                const closest = options.reduce((prev, curr) =>
-                    Math.abs(curr - budget) < Math.abs(prev - budget) ? curr : prev
-                );
-                qThinking.value = closest.toString();
-            }
-            if (qSearch) qSearch.checked = !!c.searchEnabled;
-
-            // Reset safety dropdowns to "Keep" (don't override unless user explicitly picks)
-            ['queueSafetyHarassment', 'queueSafetyHate', 'queueSafetySexual', 'queueSafetyDangerous'].forEach(id => {
-                const el = $(id);
-                if (el) el.value = '';
-            });
-        }
-    }
-}
-
-/**
- * Apply settings from the override panel to all pending queue items
- */
-export function applySettingsToRemaining() {
-    const newConfig = {};
-
-    const qRatio = $('queueRatio');
-    const qRes = $('queueResolution');
-    const qThinking = $('queueThinking');
-    const qSearch = $('queueSearch');
-
-    if (qRatio) newConfig.ratio = qRatio.value;
-    if (qRes) newConfig.resolution = qRes.value;
-    if (qThinking) newConfig.thinkingBudget = parseInt(qThinking.value);
-    if (qSearch) newConfig.searchEnabled = qSearch.checked;
-
-    // Build safety settings — only include categories the user explicitly changed
-    const safetyMap = [
-        { id: 'queueSafetyHarassment', category: 'HARM_CATEGORY_HARASSMENT' },
-        { id: 'queueSafetyHate', category: 'HARM_CATEGORY_HATE_SPEECH' },
-        { id: 'queueSafetySexual', category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT' },
-        { id: 'queueSafetyDangerous', category: 'HARM_CATEGORY_DANGEROUS_CONTENT' }
-    ];
-
-    const safetyOverrides = [];
-    safetyMap.forEach(({ id, category }) => {
-        const el = $(id);
-        if (el && el.value) {
-            safetyOverrides.push({ category, threshold: el.value });
-        }
-    });
-
-    // If any safety overrides were set, merge them with existing settings
-    if (safetyOverrides.length > 0) {
-        // We need to handle this per-item since each might have different existing safety
-        // For simplicity, just set the full array (user can set all 4 if they want granular control)
-        const state = getQueueState();
-        const firstPending = state.items.find(i => i.status === QueueStatus.PENDING);
-        const existingSafety = firstPending?.config?.safetySettings || [];
-
-        // Merge: override categories that user changed, keep others
-        const mergedSafety = [...existingSafety];
-        safetyOverrides.forEach(override => {
-            const idx = mergedSafety.findIndex(s => s.category === override.category);
-            if (idx >= 0) {
-                mergedSafety[idx] = override;
-            } else {
-                mergedSafety.push(override);
-            }
-        });
-        newConfig.safetySettings = mergedSafety;
-    }
-
-    const count = updateQueueItemConfig(newConfig);
-
-    // Hide the settings panel
-    const panel = $('queueSettingsOverride');
-    if (panel) panel.classList.add('hidden');
-
-    showToast(`Settings applied to ${count} remaining item${count !== 1 ? 's' : ''}`);
-}
-
-/**
  * Set the last-focused prompt box (called from textarea onfocus)
  */
 export function setLastFocusedBox(boxId) {
@@ -1686,6 +1522,7 @@ function setupBoxDropZoneDelegation() {
     container.addEventListener('click', e => {
         const zone = e.target.closest('.box-drop-zone');
         if (!zone) return;
+        if (!providerSupports('refs')) return;
 
         if (e.target === zone || e.target.classList.contains('box-drop-zone-placeholder')) {
             const boxId = zone.dataset.boxId;
@@ -1747,6 +1584,11 @@ function setupBoxDropZoneDelegation() {
 }
 
 async function addDroppedRefsToBox(boxId, files) {
+    if (!providerSupports('refs')) {
+        showToast('Current provider does not support reference images');
+        return;
+    }
+
     const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
     if (imageFiles.length === 0) return;
 
@@ -1791,6 +1633,11 @@ export function isBatchModalOpen() {
  * @param {File[]} imageFiles - Array of image files from clipboard
  */
 export async function pasteRefsToBox(imageFiles) {
+    if (!providerSupports('refs')) {
+        showToast('Current provider does not support reference images');
+        return;
+    }
+
     // Determine target boxes — priority: activeDropTarget > selected > lastFocused > first
     let targetBoxIds = [];
     if (activeDropTargetId && promptBoxes.find(b => b.id === activeDropTargetId)) {
@@ -1844,341 +1691,5 @@ export async function pasteRefsToBox(imageFiles) {
     showToast(`${newRefs.length} image${newRefs.length > 1 ? 's' : ''} pasted to ${label}`);
 }
 
-// ============================================
-// Generation Details Overlay
-// ============================================
-
-/**
- * Open generation details overlay for a history entry
- */
-export async function openGenerationDetails(historyId) {
-    if (!historyId) return;
-
-    const entry = await loadHistoryEntry(historyId);
-    if (!entry) {
-        showToast('History entry not found');
-        return;
-    }
-
-    // Remove any existing overlay
-    closeGenerationDetails();
-
-    const overlay = document.createElement('div');
-    overlay.className = 'generation-details-overlay';
-    overlay.id = 'generationDetailsOverlay';
-    overlay.onclick = e => { if (e.target === overlay) closeGenerationDetails(); };
-
-    const refCount = entry.refImages?.length || 0;
-    const refsHtml = refCount > 0 ? `
-        <div class="generation-details-section">
-            <div class="generation-details-section-header">
-                <span>References (${refCount})</span>
-                <button class="btn-secondary btn-sm" onclick="downloadAllGenerationRefs()">Save All</button>
-            </div>
-            <div class="generation-details-refs">
-                ${entry.refImages.map((ref, i) => `
-                    <div class="generation-details-ref-item">
-                        <img src="${ref.data}" alt="Ref ${i + 1}">
-                        <button class="generation-details-ref-save" onclick="downloadGenerationRef(${i})" title="Save">Save</button>
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-    ` : '';
-
-    const timeStr = entry.generationTimeMs
-        ? `${(entry.generationTimeMs / 1000).toFixed(1)}s`
-        : '';
-
-    overlay.innerHTML = `
-        <div class="generation-details-panel">
-            <div class="generation-details-header">
-                <h3>Generation Details</h3>
-                <button class="close-btn" onclick="closeGenerationDetails()">&times;</button>
-            </div>
-            <div class="generation-details-body">
-                <div class="generation-details-section">
-                    <div class="generation-details-section-header">
-                        <span>Prompt</span>
-                        <button class="btn-secondary btn-sm" onclick="copyGenerationPrompt()">Copy</button>
-                    </div>
-                    <div class="generation-details-prompt">${escapeHtml(entry.prompt)}</div>
-                </div>
-                <div class="generation-details-config">
-                    ${entry.config.model ? `<span class="config-badge">${escapeHtml(entry.config.model)}</span>` : ''}
-                    ${entry.config.ratio ? `<span class="config-badge">${entry.config.ratio}</span>` : ''}
-                    ${entry.config.resolution ? `<span class="config-badge">${entry.config.resolution}</span>` : ''}
-                    ${entry.config.thinkingBudget ? `<span class="config-badge">Think: ${entry.config.thinkingBudget}</span>` : ''}
-                    ${entry.config.searchEnabled ? `<span class="config-badge">Search</span>` : ''}
-                    ${timeStr ? `<span class="config-badge">${timeStr}</span>` : ''}
-                    ${entry.filename ? `<span class="config-badge" title="${escapeHtml(entry.filename)}">${escapeHtml(entry.filename)}</span>` : ''}
-                </div>
-                ${refsHtml}
-            </div>
-            <div class="generation-details-footer">
-                <button class="btn-primary" onclick="redoFromHistory('${entry.id}')">Redo</button>
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    // Store entry for ref downloads
-    overlay._historyEntry = entry;
-
-    // Animate in
-    requestAnimationFrame(() => overlay.classList.add('open'));
-}
-
-/**
- * Close generation details overlay
- */
-export function closeGenerationDetails() {
-    const overlay = document.getElementById('generationDetailsOverlay');
-    if (overlay) {
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 200);
-    }
-}
-
-/**
- * Copy prompt from the currently open details overlay
- */
-function copyGenerationPrompt() {
-    const overlay = document.getElementById('generationDetailsOverlay');
-    if (!overlay?._historyEntry) return;
-    navigator.clipboard.writeText(overlay._historyEntry.prompt)
-        .then(() => showToast('Prompt copied'))
-        .catch(() => showToast('Copy failed'));
-}
-
-/**
- * Download a single ref image from the open details overlay
- */
-function downloadGenerationRef(index) {
-    const overlay = document.getElementById('generationDetailsOverlay');
-    const entry = overlay?._historyEntry;
-    if (!entry?.refImages?.[index]) return;
-
-    const dataUrl = entry.refImages[index].data;
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = `ref_${index + 1}.png`;
-    link.click();
-}
-
-/**
- * Download all ref images from the open details overlay
- */
-function downloadAllGenerationRefs() {
-    const overlay = document.getElementById('generationDetailsOverlay');
-    const entry = overlay?._historyEntry;
-    if (!entry?.refImages?.length) return;
-
-    entry.refImages.forEach((ref, i) => {
-        setTimeout(() => {
-            const link = document.createElement('a');
-            link.href = ref.data;
-            link.download = `ref_${i + 1}.png`;
-            link.click();
-        }, i * 200);
-    });
-}
-
-/**
- * Redo a generation from history — loads prompt + refs into main UI
- */
-async function redoFromHistory(historyId) {
-    const entry = await loadHistoryEntry(historyId);
-    if (!entry) {
-        showToast('History entry not found');
-        return;
-    }
-
-    const { setRefImages, renderRefs } = await import('./references.js');
-    const { persistAllInputs } = await import('./persistence.js');
-    const { $: getEl } = await import('./ui.js');
-
-    // Load prompt
-    const promptEl = getEl('prompt');
-    if (promptEl) {
-        promptEl.value = entry.prompt;
-        promptEl.dispatchEvent(new Event('input'));
-    }
-
-    // Load refs
-    if (entry.refImages?.length > 0) {
-        const newRefs = entry.refImages.map((ref, i) => ({
-            id: Date.now() + i + Math.random(),
-            data: ref.data
-        }));
-        setRefImages(newRefs);
-        renderRefs();
-    }
-
-    persistAllInputs();
-    closeGenerationDetails();
-    toggleQueuePanel(false);
-    showToast('Loaded prompt & refs from history');
-}
-
-// ============================================
-// History Panel
-// ============================================
-
-let historyPanelOpen = false;
-
-/**
- * Toggle the history panel open/closed
- */
-export function toggleHistoryPanel(forceOpen = null) {
-    const panel = $('historyPanel');
-    const overlay = $('historyOverlay');
-    if (!panel) return;
-
-    historyPanelOpen = forceOpen !== null ? forceOpen : !historyPanelOpen;
-
-    panel.classList.toggle('open', historyPanelOpen);
-    if (overlay) overlay.classList.toggle('open', historyPanelOpen);
-
-    if (historyPanelOpen) {
-        renderHistoryPanel();
-    }
-}
-
-/**
- * Render the history panel list from IndexedDB
- */
-export async function renderHistoryPanel() {
-    const list = $('historyPanelList');
-    if (!list) return;
-
-    list.innerHTML = '<div class="history-empty">Loading...</div>';
-
-    const entries = await loadRecentHistory(100);
-
-    if (entries.length === 0) {
-        list.innerHTML = '<div class="history-empty">No generations yet</div>';
-        return;
-    }
-
-    list.innerHTML = entries.map(entry => {
-        const timeAgo = formatTimeAgo(entry.createdAt);
-        const refCount = entry.refImages?.length || 0;
-        const promptSnippet = escapeHtml(entry.prompt.slice(0, 60)) + (entry.prompt.length > 60 ? '...' : '');
-
-        return `
-            <div class="history-item" data-history-id="${entry.id}">
-                <div class="history-item-main" onclick="openGenerationDetails('${entry.id}')">
-                    <div class="history-item-prompt">${promptSnippet}</div>
-                    <div class="history-item-meta">
-                        <span>${entry.config?.model?.replace('gemini-', '').replace('-image-preview', '') || '?'}</span>
-                        ${entry.config?.ratio ? `<span>${entry.config.ratio}</span>` : ''}
-                        ${refCount > 0 ? `<span>${refCount} ref${refCount > 1 ? 's' : ''}</span>` : ''}
-                        ${entry.generationTimeMs ? `<span>${(entry.generationTimeMs / 1000).toFixed(1)}s</span>` : ''}
-                        <span>${timeAgo}</span>
-                    </div>
-                </div>
-                <button class="history-item-delete" onclick="deleteHistoryItem('${entry.id}')" title="Delete">&times;</button>
-            </div>
-        `;
-    }).join('');
-}
-
-/**
- * Delete a single history entry and re-render
- */
-async function deleteHistoryItem(id) {
-    await deleteHistoryEntry(id);
-    renderHistoryPanel();
-    showToast('Entry deleted');
-}
-
-/**
- * Clear all generation history
- */
-async function clearAllHistory() {
-    const { showConfirmDialog } = await import('./ui.js');
-    const confirmed = await showConfirmDialog({
-        title: 'Clear History',
-        message: 'Clear all generation history? This cannot be undone.',
-        confirmText: 'Clear All',
-        danger: true
-    });
-    if (!confirmed) return;
-
-    const { getDB } = await import('./history.js');
-    const db = getDB();
-    if (!db) return;
-
-    return new Promise(resolve => {
-        const tx = db.transaction('generationHistory', 'readwrite');
-        tx.objectStore('generationHistory').clear();
-        tx.oncomplete = () => {
-            renderHistoryPanel();
-            showToast('History cleared');
-            resolve();
-        };
-        tx.onerror = () => resolve();
-    });
-}
-
-/**
- * Format a timestamp as relative time (e.g. "2m ago", "3h ago", "1d ago")
- */
-function formatTimeAgo(timestamp) {
-    const diff = Date.now() - timestamp;
-    const seconds = Math.floor(diff / 1000);
-    if (seconds < 60) return 'just now';
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-}
-
-// Make functions globally available
-window.openQueueSetup = openQueueSetup;
-window.closeQueueSetup = closeQueueSetup;
-window.confirmAndStartQueue = confirmAndStartQueue;
-window.toggleQueuePanel = toggleQueuePanel;
-window.selectQueueOutputDir = selectQueueOutputDir;
-window.addPromptBox = addPromptBox;
-window.removePromptBox = removePromptBox;
-window.updateBoxPrompt = updateBoxPrompt;
-window.updateBoxName = updateBoxName;
-window.setBoxVariations = setBoxVariations;
-window.openBoxRefPicker = openBoxRefPicker;
-window.clearBoxRefs = clearBoxRefs;
-window.removeBoxRef = removeBoxRef;
-window.importBatchFolder = importBatchFolder;
-window.importBatchFile = importBatchFile;
-window.exportBatchJson = exportBatchJson;
-window.exportQueueResults = exportQueueResults;
-window.downloadBatchTemplate = downloadBatchTemplate;
-window.toggleBoxSelection = toggleBoxSelection;
-window.selectAllBoxes = selectAllBoxes;
-window.deselectAllBoxes = deselectAllBoxes;
-window.openBulkRefPicker = openBulkRefPicker;
-window.clearSelectedBoxRefs = clearSelectedBoxRefs;
-window.handleBatchButtonClick = handleBatchButtonClick;
-window.duplicatePromptBox = duplicatePromptBox;
-window.toggleQueueSettings = toggleQueueSettings;
-window.applySettingsToRemaining = applySettingsToRemaining;
-window.setLastFocusedBox = setLastFocusedBox;
-window.setActiveDropTarget = setActiveDropTarget;
-window.openBoxSavedPromptPicker = openBoxSavedPromptPicker;
-window.fillBoxFromSaved = fillBoxFromSaved;
-window.openBulkSavedPromptPicker = openBulkSavedPromptPicker;
-window.confirmBulkSavedPrompts = confirmBulkSavedPrompts;
-window.closeBulkSavedPromptPicker = closeBulkSavedPromptPicker;
-window.openGenerationDetails = openGenerationDetails;
-window.closeGenerationDetails = closeGenerationDetails;
-window.copyGenerationPrompt = copyGenerationPrompt;
-window.downloadGenerationRef = downloadGenerationRef;
-window.downloadAllGenerationRefs = downloadAllGenerationRefs;
-window.redoFromHistory = redoFromHistory;
-window.toggleHistoryPanel = toggleHistoryPanel;
-window.deleteHistoryItem = deleteHistoryItem;
-window.clearAllHistory = clearAllHistory;
+export { openGenerationDetails, toggleHistoryPanel, initQueueHistoryUI } from './queueHistory.js';
+export { toggleQueuePanel, renderQueuePanel, updateQueueFab, initQueuePanelUI } from './queuePanel.js';

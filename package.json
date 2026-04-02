@@ -1,7 +1,7 @@
 {
     "name": "nbpi",
-    "version": "2.2.0",
-    "description": "Feature-rich Gemini image generation client with batch queue, filesystem output, and dual auth support",
+    "version": "2.3.0",
+    "description": "Feature-rich multi-provider image generation client with batch queue, filesystem output, and profile snapshots",
     "main": "index.html",
     "author": "",
     "license": "MIT",

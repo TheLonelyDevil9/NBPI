@@ -3,195 +3,241 @@
  * Initialization and event setup
  */
 
-import { $, debounce, restoreCollapsibleStates, updateCharCounter, updateAspectPreview, updateThinkingLabel, openPromptEditor, closePromptEditor, updatePromptEditorCounter, showToast, restoreTheme } from './ui.js';
+import {
+    $,
+    debounce,
+    restoreCollapsibleStates,
+    updateCharCounter,
+    updateAspectPreview,
+    updateThinkingLabel,
+    openPromptEditor,
+    closePromptEditor,
+    updatePromptEditorCounter,
+    showToast,
+    restoreTheme
+} from './ui.js';
 import { restoreAllInputs, setupInputPersistence, updateThinkingNote, saveLastModel } from './persistence.js';
 import { refreshModels } from './models.js';
-import { loadRefImages, setupRefDragDrop, setupClipboardPaste, setupRefPreviewSwipe } from './references.js';
+import { loadRefImages, renderRefs, setupRefDragDrop, setupClipboardPaste, setupRefPreviewSwipe } from './references.js';
 import { initDB } from './history.js';
 import { setupZoomHandlers } from './zoom.js';
-import { generate } from './generation.js';
+import { clearAll, deleteCurrentImage, generate, getCurrentHistoryId, iterate } from './generation.js';
 import { loadSavedPrompts, isDropdownOpen, closePromptsDropdown, saveCurrentPrompt } from './prompts.js';
-import { isFileSystemSupported, restoreDirectoryHandle, updateFileSystemSupportUI } from './filesystem.js';
+import {
+    clearDirectorySelection,
+    isFileSystemSupported,
+    restoreDirectoryHandle,
+    selectOutputDirectory,
+    updateFileSystemSupportUI
+} from './filesystem.js';
 import { restoreQueueState, hasResumableQueue } from './queue.js';
 import { initQueueUI, handleBatchButtonClick, toggleQueuePanel, closeQueueSetup } from './queueUI.js';
-import { initProfiles, saveProfile, loadProfile, listProfiles, deleteProfile, exportProfile, importProfile, getActiveProfile } from './profiles.js';
+import {
+    initProfiles,
+    saveProfile,
+    loadProfile,
+    listProfiles,
+    deleteProfile,
+    exportProfile,
+    importProfile,
+    getActiveProfile
+} from './profiles.js';
+import {
+    getCurrentProvider,
+    persistCurrentProviderState,
+    providerSupports,
+    restoreProviderState,
+    switchProvider
+} from './providers/index.js';
 
-// Initialize application
-async function init() {
-    // Restore theme first (before any rendering)
-    restoreTheme();
+function bindClick(id, handler) {
+    $(id)?.addEventListener('click', handler);
+}
 
-    // Restore credentials from localStorage
-    $('apiKey').value = localStorage.getItem('gemini_api_key') || '';
+function bindProfileControls() {
+    bindClick('saveProfileBtn', saveCurrentProfile);
+    bindClick('loadProfileBtn', loadSelectedProfile);
+    bindClick('deleteProfileBtn', deleteSelectedProfile);
+    bindClick('exportProfileBtn', exportSelectedProfile);
+    $('profileImportInput')?.addEventListener('change', importProfileFile);
+}
 
-    // Restore all inputs and UI state
-    restoreAllInputs();
-    restoreCollapsibleStates();
-    setupInputPersistence();
+function bindMainControls() {
+    bindClick('refreshBtn', () => refreshModels(true));
+    bindClick('generateBtn', generate);
+    bindClick('batchBtn', handleBatchButtonClick);
+    bindClick('clearAllBtn', clearAll);
+    bindClick('iterateBtn', iterate);
+    bindClick('deleteBtn', deleteCurrentImage);
+    bindClick('selectDirBtn', selectOutputDirectory);
+    bindClick('clearDirBtn', clearDirectorySelection);
+    bindClick('infoBtn', async () => {
+        const historyId = getCurrentHistoryId();
+        if (!historyId) return;
+        const { openGenerationDetails } = await import('./queueUI.js');
+        openGenerationDetails(historyId);
+    });
+}
 
-    // Initialize database before any IndexedDB-backed restore paths
-    await initDB();
-    await initProfiles();
+function bindProviderControls() {
+    $('providerSelect')?.addEventListener('change', async (event) => {
+        persistCurrentProviderState();
+        switchProvider(event.target.value);
+        renderRefs();
+        updateThinkingNote();
 
-    // Load reference images
-    await loadRefImages();
-    await loadSavedPrompts();
-
-    // Initialize UI elements
-    updateCharCounter();
-    updateAspectPreview();
-
-    // API key change handler
-    $('apiKey').addEventListener('input', debounce(() => {
-        localStorage.setItem('gemini_api_key', $('apiKey').value);
-        if ($('apiKey').value.length > 20) refreshModels();
-    }, 500));
-
-    // Thinking toggle handler
-    $('thinkingToggle').addEventListener('change', () => {
-        $('thinkingRow').style.display = $('thinkingToggle').checked ? 'block' : 'none';
+        if (getCurrentProvider().features.modelListing && $('apiKey').value.length > 20) {
+            await refreshModels(true);
+        }
     });
 
-    // Model select handler
-    $('modelSelect').addEventListener('change', () => {
+    $('apiKey')?.addEventListener('input', debounce(() => {
+        persistCurrentProviderState();
+        if (getCurrentProvider().features.modelListing && $('apiKey').value.length > 20) {
+            refreshModels();
+        }
+    }, 500));
+
+    $('providerBaseUrl')?.addEventListener('input', debounce(persistCurrentProviderState, 300));
+    $('providerModelInput')?.addEventListener('input', debounce(persistCurrentProviderState, 300));
+    $('modelSelect')?.addEventListener('change', () => {
         saveLastModel();
         updateThinkingNote();
     });
 
-    // Thinking budget handler
-    $('thinkingBudget').addEventListener('input', updateThinkingLabel);
+    window.addEventListener('nbpi:provider-change', () => {
+        renderRefs();
+        updateThinkingNote();
+    });
+}
 
-    // Thinking budget number input -> sync to slider
-    $('thinkingBudgetNum').addEventListener('input', () => {
-        let v = parseInt($('thinkingBudgetNum').value);
-        if (isNaN(v)) return;
-        v = Math.max(-1, Math.min(24576, v));
-        if (v > 0 && v < 128) v = 128;
-        $('thinkingBudget').value = v;
+function bindInputEnhancements() {
+    $('thinkingToggle')?.addEventListener('change', () => {
+        $('thinkingRow').style.display = providerSupports('thinking') && $('thinkingToggle').checked ? 'block' : 'none';
+    });
+
+    $('thinkingBudget')?.addEventListener('input', updateThinkingLabel);
+
+    $('thinkingBudgetNum')?.addEventListener('input', () => {
+        let value = parseInt($('thinkingBudgetNum').value, 10);
+        if (Number.isNaN(value)) return;
+        value = Math.max(-1, Math.min(24576, value));
+        if (value > 0 && value < 128) value = 128;
+        $('thinkingBudget').value = value;
         updateThinkingLabel();
     });
 
-    $('thinkingBudgetNum').addEventListener('blur', () => {
-        let v = parseInt($('thinkingBudgetNum').value);
-        if (isNaN(v)) v = -1;
-        v = Math.max(-1, Math.min(24576, v));
-        if (v > 0 && v < 128) v = 128;
-        $('thinkingBudget').value = v;
-        $('thinkingBudgetNum').value = v;
+    $('thinkingBudgetNum')?.addEventListener('blur', () => {
+        let value = parseInt($('thinkingBudgetNum').value, 10);
+        if (Number.isNaN(value)) value = -1;
+        value = Math.max(-1, Math.min(24576, value));
+        if (value > 0 && value < 128) value = 128;
+        $('thinkingBudget').value = value;
+        $('thinkingBudgetNum').value = value;
         updateThinkingLabel();
     });
 
-    // Prompt character counter
-    $('prompt').addEventListener('input', updateCharCounter);
+    $('prompt')?.addEventListener('input', updateCharCounter);
+    $('ratio')?.addEventListener('change', updateAspectPreview);
+    $('promptEditorTextarea')?.addEventListener('input', updatePromptEditorCounter);
 
-    // Aspect ratio preview
-    $('ratio').addEventListener('change', updateAspectPreview);
-
-    // Ctrl+Enter to generate (Ctrl+Shift+Enter also works)
-    $('prompt').addEventListener('keydown', e => {
+    $('prompt')?.addEventListener('keydown', e => {
         if (e.key === 'Enter' && e.ctrlKey) {
             e.preventDefault();
             generate();
         }
     });
+}
 
-    // Setup drag and drop
+// Initialize application
+async function init() {
+    restoreTheme();
+    restoreProviderState();
+    restoreAllInputs();
+    restoreCollapsibleStates();
+    setupInputPersistence();
+
+    await initDB();
+    await initProfiles();
+
+    await loadRefImages();
+    await loadSavedPrompts();
+
+    updateCharCounter();
+    updateAspectPreview();
+    $('thinkingRow').style.display = providerSupports('thinking') && $('thinkingToggle').checked ? 'block' : 'none';
+    bindProviderControls();
+    bindInputEnhancements();
+    bindMainControls();
+    bindProfileControls();
+
     setupRefDragDrop();
     setupClipboardPaste();
     setupRefPreviewSwipe();
-
-    // Setup zoom handlers
     setupZoomHandlers();
 
-    // Initialize filesystem module
     updateFileSystemSupportUI();
     if (isFileSystemSupported()) {
         const restored = await restoreDirectoryHandle();
         if (restored === 'needs-permission') {
-            // Handle permission request on user gesture
             console.log('Directory handle restored, needs permission on next action');
         }
     }
 
-    // Restore queue state (async - loads refs from IndexedDB)
     const savedQueue = await restoreQueueState();
-
-    // Initialize queue UI
     initQueueUI();
-
-    // Initialize profile UI
     await updateProfileDropdown();
 
-    // Check for resumable queue
     if (savedQueue && hasResumableQueue()) {
         showToast('Previous queue found. Open Batch Queue to resume.');
     }
 
-    // Click outside to close prompts dropdown
     document.addEventListener('click', e => {
         if (isDropdownOpen() && !e.target.closest('.dropdown-container') && !e.target.closest('.dropdown')) {
             closePromptsDropdown();
         }
     });
 
-    // Keyboard shortcuts
     document.addEventListener('keydown', e => {
-        // Don't trigger shortcuts when typing in inputs/textareas (except Escape)
         const isTyping = e.target.matches('input, textarea, [contenteditable]');
 
-        // Escape - close any open modal/panel
         if (e.key === 'Escape') {
             e.preventDefault();
             closeAllModals();
             return;
         }
 
-        // Skip other shortcuts if typing
         if (isTyping) return;
 
-        // Ctrl+Enter - Generate image
         if (e.ctrlKey && e.key === 'Enter') {
             e.preventDefault();
-            const generateBtn = $('generateBtn');
-            if (generateBtn && !generateBtn.disabled) {
-                generateBtn.click();
-            }
+            $('generateBtn')?.click();
             return;
         }
 
-        // Ctrl+Shift+F - Open fullscreen prompt editor
         if (e.ctrlKey && e.shiftKey && e.key === 'F') {
             e.preventDefault();
             openPromptEditor();
             return;
         }
 
-        // Ctrl+B - Open batch setup
         if (e.ctrlKey && e.key === 'b') {
             e.preventDefault();
             handleBatchButtonClick();
             return;
         }
 
-        // Ctrl+S - Save current prompt (if prompts dropdown exists)
         if (e.ctrlKey && e.key === 's') {
             e.preventDefault();
-            if (typeof saveCurrentPrompt === 'function') {
-                saveCurrentPrompt();
-            }
-            return;
+            saveCurrentPrompt();
         }
     });
 
-    // Prompt editor textarea input handler
-    $('promptEditorTextarea')?.addEventListener('input', updatePromptEditorCounter);
-
-    // Load models if API key exists
-    if ($('apiKey').value.length > 20) {
+    if (getCurrentProvider().features.modelListing && $('apiKey').value.length > 20) {
         refreshModels();
     }
 
-    console.log('🍌 NBPI initialized');
+    console.log('NBPI initialized');
 }
 
 /**
@@ -204,7 +250,6 @@ async function updateProfileDropdown() {
     const profiles = await listProfiles();
     const activeProfile = getActiveProfile();
 
-    // Clear and rebuild options
     select.innerHTML = '<option value="">None</option>';
     profiles.forEach(name => {
         const option = document.createElement('option');
@@ -217,10 +262,7 @@ async function updateProfileDropdown() {
     });
 }
 
-/**
- * Save current settings as profile
- */
-window.saveCurrentProfile = async function() {
+async function saveCurrentProfile() {
     const nameInput = $('profileName');
     const name = nameInput.value.trim();
 
@@ -233,33 +275,22 @@ window.saveCurrentProfile = async function() {
         nameInput.value = '';
         await updateProfileDropdown();
     }
-};
+}
 
-/**
- * Load selected profile
- */
-window.loadSelectedProfile = async function() {
-    const select = $('profileSelect');
-    const name = select.value;
-
+async function loadSelectedProfile() {
+    const name = $('profileSelect')?.value;
     if (!name) {
         showToast('Select a profile to load');
         return;
     }
 
     if (await loadProfile(name)) {
-        // Reload the page to apply all settings
         location.reload();
     }
-};
+}
 
-/**
- * Delete selected profile
- */
-window.deleteSelectedProfile = async function() {
-    const select = $('profileSelect');
-    const name = select.value;
-
+async function deleteSelectedProfile() {
+    const name = $('profileSelect')?.value;
     if (!name) {
         showToast('Select a profile to delete');
         return;
@@ -270,65 +301,53 @@ window.deleteSelectedProfile = async function() {
             await updateProfileDropdown();
         }
     }
-};
+}
 
-/**
- * Export selected profile
- */
-window.exportSelectedProfile = async function() {
-    const select = $('profileSelect');
-    const name = select.value;
-
+async function exportSelectedProfile() {
+    const name = $('profileSelect')?.value;
     if (!name) {
         showToast('Select a profile to export');
         return;
     }
 
     await exportProfile(name);
-};
+}
 
-/**
- * Import profile from file
- */
-window.importProfileFile = async function(event) {
-    const file = event.target.files[0];
+async function importProfileFile(event) {
+    const file = event.target.files?.[0];
     if (!file) return;
 
     if (await importProfile(file)) {
         await updateProfileDropdown();
     }
 
-    // Clear file input
     event.target.value = '';
-};
+}
 
 /**
  * Close all open modals and panels
  */
 function closeAllModals() {
-    // Close queue setup modal
-    const queueSetupModal = $('queueSetupModal');
-    if (queueSetupModal?.classList.contains('open')) {
+    if ($('queueSetupModal')?.classList.contains('open')) {
         closeQueueSetup();
         return;
     }
 
-    // Close queue panel
-    const queuePanel = $('queuePanel');
-    if (queuePanel?.classList.contains('open')) {
+    if ($('queuePanel')?.classList.contains('open')) {
         toggleQueuePanel(false);
         return;
     }
 
-    // Close prompt editor
-    const promptEditor = $('promptEditorModal');
-    if (promptEditor?.classList.contains('open')) {
-        closePromptEditor();
+    if ($('historyPanel')?.classList.contains('open')) {
+        import('./queueUI.js').then(m => m.toggleHistoryPanel(false));
         return;
+    }
+
+    if ($('promptEditorModal')?.classList.contains('open')) {
+        closePromptEditor();
     }
 }
 
-// Start app when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {

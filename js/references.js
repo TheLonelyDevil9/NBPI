@@ -7,6 +7,7 @@ import { MAX_REF_IMAGE_SIZE, MAX_REFS } from './config.js';
 import { $, showToast } from './ui.js';
 import { getDB } from './history.js';
 import { loadPersistedInput } from './persistence.js';
+import { providerSupports } from './providers/index.js';
 
 // Reference images state
 export let refImages = [];
@@ -90,6 +91,12 @@ export async function compressImage(dataUrl) {
 
 // Add reference images from files
 export async function addRefImages(files) {
+    if (!providerSupports('refs')) {
+        showToast('Current provider does not support reference images');
+        $('refInput').value = '';
+        return;
+    }
+
     const fileArray = Array.from(files);
     let addedCount = 0;
 
@@ -127,9 +134,10 @@ export async function addRefImages(files) {
 export function renderRefs() {
     const refGrid = $('refGrid');
     const refCount = $('refCount');
+    const supportsRefs = providerSupports('refs');
 
     const addBtn = refImages.length < MAX_REFS
-        ? '<button class="ref-add" onclick="document.getElementById(\'refInput\').click()">+</button>'
+        ? `<button class="ref-add" ${supportsRefs ? '' : 'disabled'} onclick="document.getElementById('refInput').click()">+</button>`
         : '';
 
     refGrid.innerHTML = refImages.map((img, idx) =>
@@ -141,6 +149,7 @@ export function renderRefs() {
     ).join('') + addBtn;
 
     refCount.textContent = refImages.length ? '(' + refImages.length + '/' + MAX_REFS + ')' : '';
+    $('refSection')?.classList.toggle('provider-disabled', !supportsRefs);
 
     // Setup reorder drag handlers on each thumb
     setupRefReorderHandlers(refGrid);
@@ -391,6 +400,11 @@ export function setupClipboardPaste() {
                 return;
             }
         } catch { /* queueUI not loaded yet, fall through to global */ }
+
+        if (!providerSupports('refs')) {
+            showToast('Current provider does not support reference images');
+            return;
+        }
 
         // Default: add to global refs
         let addedCount = 0;

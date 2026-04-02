@@ -4,6 +4,7 @@
  */
 
 import { $, updateThinkingLabel, debounce } from './ui.js';
+import { persistCurrentProviderState, providerSupports, restoreProviderModelSelection } from './providers/index.js';
 
 // Persist a single input value
 export function persistInput(key, value) {
@@ -106,31 +107,22 @@ export function setupInputPersistence() {
 
 // Save last used model
 export function saveLastModel() {
-    const modelSelect = $('modelSelect');
-    if (modelSelect.value) {
-        localStorage.setItem('last_model', modelSelect.value);
-    }
+    persistCurrentProviderState();
 }
 
 // Restore last used model
 export function restoreLastModel() {
-    const last = localStorage.getItem('last_model');
-    const modelSelect = $('modelSelect');
-    if (last) {
-        setTimeout(() => {
-            if (modelSelect.querySelector('option[value="' + last + '"]')) {
-                modelSelect.value = last;
-            }
-            updateThinkingNote();
-        }, 100);
-    }
+    setTimeout(() => {
+        restoreProviderModelSelection();
+        updateThinkingNote();
+    }, 100);
 }
 
 // Update thinking note for specific models
 export function updateThinkingNote() {
     const note = $('thinkingNote');
     if (note) {
-        const model = $('modelSelect').value;
+        const model = providerSupports('thinking') ? $('modelSelect').value : '';
         const isProModel = model.includes('gemini-3-pro');
         note.style.display = isProModel ? 'block' : 'none';
     }

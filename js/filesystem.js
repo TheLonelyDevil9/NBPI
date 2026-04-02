@@ -14,7 +14,12 @@ function isLoopbackHost(hostname) {
 }
 
 export function getFileSystemSupportDetails() {
-    const hasPickerApi = 'showDirectoryPicker' in window;
+    return getPickerSupportDetails('directory');
+}
+
+export function getPickerSupportDetails(kind = 'directory') {
+    const apiName = kind === 'file' ? 'showOpenFilePicker' : 'showDirectoryPicker';
+    const hasPickerApi = apiName in window;
     const isPotentiallyTrustworthy = window.isSecureContext ||
         window.location.protocol === 'https:' ||
         isLoopbackHost(window.location.hostname);
@@ -31,14 +36,18 @@ export function getFileSystemSupportDetails() {
         return {
             supported: false,
             reason: 'insecure-context',
-            message: 'Folder selection requires localhost, 127.0.0.1, or HTTPS. Images will download instead on this origin.'
+            message: kind === 'directory'
+                ? 'Folder selection requires localhost, 127.0.0.1, or HTTPS. Images will download instead on this origin.'
+                : 'File picking requires localhost, 127.0.0.1, or HTTPS on this origin.'
         };
     }
 
     return {
         supported: false,
         reason: 'unsupported-browser',
-        message: 'This browser does not support File System Access. Images will download instead.'
+        message: kind === 'directory'
+            ? 'This browser does not support File System Access. Images will download instead.'
+            : 'This browser does not support File System Access file pickers.'
     };
 }
 
@@ -47,6 +56,50 @@ export function getFileSystemSupportDetails() {
  */
 export function isFileSystemSupported() {
     return getFileSystemSupportDetails().supported;
+}
+
+function notifyUnsupportedPicker(kind, support) {
+    const message = support?.message || getPickerSupportDetails(kind).message;
+    if (message) {
+        showToast(message);
+    }
+}
+
+export async function pickDirectoryHandle(options = {}, { showErrors = true } = {}) {
+    const support = getPickerSupportDetails('directory');
+    if (!support.supported) {
+        if (showErrors) notifyUnsupportedPicker('directory', support);
+        return null;
+    }
+
+    try {
+        return await window.showDirectoryPicker(options);
+    } catch (error) {
+        if (error.name !== 'AbortError' && showErrors) {
+            console.error('Directory picker failed:', error);
+            showToast('Failed to select folder');
+        }
+        return null;
+    }
+}
+
+export async function pickFileHandle(options = {}, { showErrors = true } = {}) {
+    const support = getPickerSupportDetails('file');
+    if (!support.supported) {
+        if (showErrors) notifyUnsupportedPicker('file', support);
+        return null;
+    }
+
+    try {
+        const [handle] = await window.showOpenFilePicker(options);
+        return handle || null;
+    } catch (error) {
+        if (error.name !== 'AbortError' && showErrors) {
+            console.error('File picker failed:', error);
+            showToast('Failed to select file');
+        }
+        return null;
+    }
 }
 
 /**
@@ -70,29 +123,20 @@ export function getDirectoryInfo() {
  * Select output directory via picker
  */
 export async function selectOutputDirectory() {
-    const support = getFileSystemSupportDetails();
-    if (!support.supported) {
-        showToast(support.message);
+    const selectedHandle = await pickDirectoryHandle({
+        mode: 'readwrite',
+        startIn: 'pictures'
+    });
+
+    if (!selectedHandle) {
         return false;
     }
 
-    try {
-        directoryHandle = await window.showDirectoryPicker({
-            mode: 'readwrite',
-            startIn: 'pictures'
-        });
-
-        await persistDirectoryHandle();
-        updateDirectoryUI();
-        showToast(`Output folder: ${directoryHandle.name}`);
-        return true;
-    } catch (e) {
-        if (e.name !== 'AbortError') {
-            console.error('Directory selection failed:', e);
-            showToast('Failed to select folder');
-        }
-        return false;
-    }
+    directoryHandle = selectedHandle;
+    await persistDirectoryHandle();
+    updateDirectoryUI();
+    showToast(`Output folder: ${directoryHandle.name}`);
+    return true;
 }
 
 /**
@@ -378,6 +422,7 @@ export function updateFileSystemSupportUI() {
     const support = getFileSystemSupportDetails();
     const warningEl = document.getElementById('fsSupportWarning');
     const selectBtn = document.getElementById('selectDirBtn');
+    const queueSelectBtn = document.getElementById('selectQueueOutputDirBtn');
 
     if (warningEl) {
         warningEl.style.display = support.supported ? 'none' : 'block';
@@ -388,8 +433,9 @@ export function updateFileSystemSupportUI() {
         selectBtn.disabled = !support.supported;
         selectBtn.title = support.supported ? '' : support.message;
     }
-}
 
-// Export for global access
-window.selectOutputDirectory = selectOutputDirectory;
-window.clearDirectorySelection = clearDirectorySelection;
+    if (queueSelectBtn) {
+        queueSelectBtn.disabled = !support.supported;
+        queueSelectBtn.title = support.supported ? '' : support.message;
+    }
+}

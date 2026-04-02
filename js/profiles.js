@@ -12,8 +12,13 @@ const LEGACY_PROFILES_KEY = 'nbp_profiles';
 const ACTIVE_PROFILE_KEY = 'nbp_active_profile';
 const PROFILE_VERSION = '2.0';
 const MANAGED_LOCAL_STORAGE_KEYS = new Set([
+    'provider_id',
     'gemini_api_key',
+    'openai_compatible_api_key',
+    'openai_compatible_base_url',
+    'openai_compatible_model',
     'last_model',
+    'last_model_gemini',
     'theme',
     QUEUE_STORAGE_KEY
 ]);
@@ -119,14 +124,33 @@ function getManagedLocalStorageKeys() {
 function persistCurrentUiState() {
     persistAllInputs();
 
+    const providerId = document.getElementById('providerSelect')?.value || localStorage.getItem('provider_id') || 'gemini';
     const apiKeyInput = document.getElementById('apiKey');
+    const modelSelect = document.getElementById('modelSelect');
+    const providerBaseUrl = document.getElementById('providerBaseUrl');
+    const providerModelInput = document.getElementById('providerModelInput');
+
+    localStorage.setItem('provider_id', providerId);
+
     if (apiKeyInput) {
-        localStorage.setItem('gemini_api_key', apiKeyInput.value || '');
+        if (providerId === 'openai-compatible') {
+            localStorage.setItem('openai_compatible_api_key', apiKeyInput.value || '');
+        } else {
+            localStorage.setItem('gemini_api_key', apiKeyInput.value || '');
+        }
     }
 
-    const modelSelect = document.getElementById('modelSelect');
+    if (providerBaseUrl) {
+        localStorage.setItem('openai_compatible_base_url', providerBaseUrl.value || '');
+    }
+
+    if (providerModelInput) {
+        localStorage.setItem('openai_compatible_model', providerModelInput.value || '');
+    }
+
     if (modelSelect?.value) {
         localStorage.setItem('last_model', modelSelect.value);
+        localStorage.setItem('last_model_gemini', modelSelect.value);
     }
 
     localStorage.setItem('theme', document.documentElement.getAttribute('data-theme') || 'dark');
@@ -230,7 +254,11 @@ function normalizeProfileRecord(profile, fallbackName = '') {
 function sanitizeProfileForExport(profile) {
     const normalized = normalizeProfileRecord(profile);
     const localState = { ...normalized.localState };
-    delete localState.gemini_api_key;
+    Object.keys(localState).forEach(key => {
+        if (/api[_-]?key/i.test(key)) {
+            delete localState[key];
+        }
+    });
 
     return {
         ...normalized,
