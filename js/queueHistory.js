@@ -32,6 +32,32 @@ function getHistoryModelLabel(config = {}) {
     return config.model ? `${provider.label}: ${config.model}` : provider.label;
 }
 
+function getHistoryStatus(entry = {}) {
+    if (entry.status === 'failed' || entry.status === 'cancelled' || entry.status === 'completed') {
+        return entry.status;
+    }
+    if (entry.error) {
+        return 'failed';
+    }
+    return 'completed';
+}
+
+function getHistoryStatusLabel(status) {
+    switch (status) {
+        case 'failed': return 'Failed';
+        case 'cancelled': return 'Cancelled';
+        default: return 'Completed';
+    }
+}
+
+function getHistoryDownloadName(entry) {
+    if (entry.filename) {
+        return entry.filename;
+    }
+    const timestamp = entry.createdAt ? new Date(entry.createdAt).toISOString().replace(/[:.]/g, '-') : Date.now();
+    return `generation_${timestamp}.png`;
+}
+
 export function initQueueHistoryUI() {
     if (historyUiInitialized) return;
 
@@ -74,6 +100,8 @@ export async function openGenerationDetails(historyId) {
     overlay.className = 'generation-details-overlay';
     overlay.id = 'generationDetailsOverlay';
 
+    const status = getHistoryStatus(entry);
+    const statusLabel = getHistoryStatusLabel(status);
     const refCount = entry.refImages?.length || 0;
     const refsHtml = refCount > 0 ? `
         <div class="generation-details-section">
@@ -91,10 +119,30 @@ export async function openGenerationDetails(historyId) {
             </div>
         </div>
     ` : '';
+    const outputHtml = entry.imageData ? `
+        <div class="generation-details-section">
+            <div class="generation-details-section-header">
+                <span>Output</span>
+                <button class="btn-secondary btn-sm" data-details-action="save-image">Save</button>
+            </div>
+            <div class="generation-details-image">
+                <img src="${entry.imageData}" alt="Generated output">
+            </div>
+        </div>
+    ` : '';
+    const errorHtml = entry.error ? `
+        <div class="generation-details-section">
+            <div class="generation-details-section-header">
+                <span>Error</span>
+            </div>
+            <div class="generation-details-error">${escapeHtml(entry.error)}</div>
+        </div>
+    ` : '';
 
     const timeLabel = entry.generationTimeMs ? `${(entry.generationTimeMs / 1000).toFixed(1)}s` : '';
     const provider = getProvider(entry.config?.providerId);
     const configBadges = [
+        `<span class="history-status-badge history-status-${status}">${statusLabel}</span>`,
         entry.config?.providerLabel || provider.label,
         entry.config?.model,
         entry.config?.ratio,
@@ -120,8 +168,10 @@ export async function openGenerationDetails(historyId) {
                     <div class="generation-details-prompt">${escapeHtml(entry.prompt)}</div>
                 </div>
                 <div class="generation-details-config">
-                    ${configBadges.map(badge => `<span class="config-badge" title="${escapeHtml(badge)}">${escapeHtml(badge)}</span>`).join('')}
+                    ${configBadges.map(badge => badge.startsWith('<span ') ? badge : `<span class="config-badge" title="${escapeHtml(badge)}">${escapeHtml(badge)}</span>`).join('')}
                 </div>
+                ${errorHtml}
+                ${outputHtml}
                 ${refsHtml}
             </div>
             <div class="generation-details-footer">
@@ -146,6 +196,8 @@ export async function openGenerationDetails(historyId) {
             closeGenerationDetails();
         } else if (detailsAction === 'copy-prompt') {
             await copyGenerationPrompt();
+        } else if (detailsAction === 'save-image') {
+            downloadGenerationImage();
         } else if (detailsAction === 'save-ref') {
             downloadGenerationRef(parseInt(refIndex, 10));
         } else if (detailsAction === 'save-all-refs') {
@@ -177,6 +229,17 @@ async function copyGenerationPrompt() {
     } catch {
         showToast('Copy failed');
     }
+}
+
+function downloadGenerationImage() {
+    const overlay = document.getElementById('generationDetailsOverlay');
+    const entry = overlay?._historyEntry;
+    if (!entry?.imageData) return;
+
+    const link = document.createElement('a');
+    link.href = entry.imageData;
+    link.download = getHistoryDownloadName(entry);
+    link.click();
 }
 
 function downloadGenerationRef(index) {
@@ -213,6 +276,7 @@ async function redoFromHistory(historyId) {
     }
 
     const providerId = entry.config?.providerId || 'gemini';
+    const provider = getProvider(providerId);
     switchProvider(providerId);
 
     if (providerId === 'gemini' && $('apiKey')?.value?.length > 20) {
@@ -224,15 +288,23 @@ async function redoFromHistory(historyId) {
         }
     }
 
-    if ($('providerBaseUrl') && entry.config?.baseUrl) {
-        $('providerBaseUrl').value = entry.config.baseUrl;
+    if ($('providerBaseUrl') && provider.storageKeys.baseUrl) {
+        $('providerBaseUrl').value = entry.config?.baseUrl || '';
     }
 
-    if (providerId === 'openai-compatible') {
+    $('modelSelect')?.querySelectorAll('[data-history-model="true"]').forEach(option => option.remove());
+
+    if (!provider.features.modelListing && $('providerModelInput')) {
         $('providerModelInput').value = entry.config?.model || '';
     } else if ($('modelSelect')?.querySelector(`option[value="${entry.config?.model || ''}"]`)) {
         $('modelSelect').value = entry.config.model;
-    } else if (entry.config?.model) {
+    } else if (entry.config?.model && $('modelSelect')) {
+        const option = document.createElement('option');
+        option.value = entry.config.model;
+        option.textContent = entry.config.model;
+        option.dataset.historyModel = 'true';
+        $('modelSelect').appendChild(option);
+        $('modelSelect').value = entry.config.model;
         localStorage.setItem('last_model', entry.config.model);
         localStorage.setItem('last_model_gemini', entry.config.model);
     }
@@ -242,14 +314,19 @@ async function redoFromHistory(historyId) {
     $('ratio').value = entry.config?.ratio || '';
     $('resolution').value = entry.config?.resolution || '4K';
 
-    if (providerSupports('search', providerId) && $('searchToggle')) {
-        $('searchToggle').checked = !!entry.config?.searchEnabled;
+    if ($('searchToggle')) {
+        $('searchToggle').checked = providerSupports('search', providerId) ? !!entry.config?.searchEnabled : false;
     }
 
-    if (providerSupports('thinking', providerId) && $('thinkingToggle') && $('thinkingBudget')) {
-        const budget = entry.config?.thinkingBudget ?? -1;
-        $('thinkingToggle').checked = budget !== 0;
-        $('thinkingBudget').value = String(budget);
+    if ($('thinkingToggle') && $('thinkingBudget')) {
+        if (providerSupports('thinking', providerId)) {
+            const budget = entry.config?.thinkingBudget ?? -1;
+            $('thinkingToggle').checked = budget !== 0;
+            $('thinkingBudget').value = String(budget);
+        } else {
+            $('thinkingToggle').checked = true;
+            $('thinkingBudget').value = '-1';
+        }
         updateThinkingLabel();
     }
 
@@ -313,19 +390,26 @@ export async function renderHistoryPanel() {
 
     list.innerHTML = entries.map(entry => {
         const refCount = entry.refImages?.length || 0;
+        const status = getHistoryStatus(entry);
+        const statusLabel = getHistoryStatusLabel(status);
         const promptSnippet = `${escapeHtml(entry.prompt.slice(0, 60))}${entry.prompt.length > 60 ? '...' : ''}`;
+        const errorSnippet = entry.error
+            ? `<div class="history-item-error">${escapeHtml(entry.error)}</div>`
+            : '';
 
         return `
             <div class="history-item" data-history-id="${entry.id}">
                 <div class="history-item-main" data-history-open="${entry.id}">
                     <div class="history-item-prompt">${promptSnippet}</div>
                     <div class="history-item-meta">
+                        <span class="history-status-badge history-status-${status}">${statusLabel}</span>
                         <span>${escapeHtml(getHistoryModelLabel(entry.config))}</span>
                         ${entry.config?.ratio ? `<span>${entry.config.ratio}</span>` : ''}
                         ${refCount > 0 ? `<span>${refCount} ref${refCount > 1 ? 's' : ''}</span>` : ''}
                         ${entry.generationTimeMs ? `<span>${(entry.generationTimeMs / 1000).toFixed(1)}s</span>` : ''}
                         <span>${formatTimeAgo(entry.createdAt)}</span>
                     </div>
+                    ${errorSnippet}
                 </div>
                 <button class="history-item-delete" data-history-delete="${entry.id}" title="Delete">&times;</button>
             </div>

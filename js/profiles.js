@@ -6,6 +6,7 @@
 import { QUEUE_STORAGE_KEY } from './config.js';
 import { getDB } from './history.js';
 import { persistAllInputs } from './persistence.js';
+import { getProvider } from './providers/index.js';
 import { showToast } from './ui.js';
 
 const LEGACY_PROFILES_KEY = 'nbp_profiles';
@@ -14,6 +15,9 @@ const PROFILE_VERSION = '2.0';
 const MANAGED_LOCAL_STORAGE_KEYS = new Set([
     'provider_id',
     'gemini_api_key',
+    'linkapi_api_key',
+    'linkapi_base_url',
+    'linkapi_model',
     'openai_compatible_api_key',
     'openai_compatible_base_url',
     'openai_compatible_model',
@@ -125,6 +129,7 @@ function persistCurrentUiState() {
     persistAllInputs();
 
     const providerId = document.getElementById('providerSelect')?.value || localStorage.getItem('provider_id') || 'gemini';
+    const provider = getProvider(providerId);
     const apiKeyInput = document.getElementById('apiKey');
     const modelSelect = document.getElementById('modelSelect');
     const providerBaseUrl = document.getElementById('providerBaseUrl');
@@ -132,23 +137,24 @@ function persistCurrentUiState() {
 
     localStorage.setItem('provider_id', providerId);
 
-    if (apiKeyInput) {
-        if (providerId === 'openai-compatible') {
-            localStorage.setItem('openai_compatible_api_key', apiKeyInput.value || '');
-        } else {
-            localStorage.setItem('gemini_api_key', apiKeyInput.value || '');
-        }
+    if (apiKeyInput && provider.storageKeys.apiKey) {
+        localStorage.setItem(provider.storageKeys.apiKey, apiKeyInput.value || '');
     }
 
-    if (providerBaseUrl) {
-        localStorage.setItem('openai_compatible_base_url', providerBaseUrl.value || '');
+    if (providerBaseUrl && provider.storageKeys.baseUrl) {
+        localStorage.setItem(provider.storageKeys.baseUrl, providerBaseUrl.value || '');
     }
 
-    if (providerModelInput) {
-        localStorage.setItem('openai_compatible_model', providerModelInput.value || '');
+    if (provider.features.modelListing && modelSelect?.value) {
+        localStorage.setItem('last_model', modelSelect.value);
+        localStorage.setItem(provider.storageKeys.model, modelSelect.value);
     }
 
-    if (modelSelect?.value) {
+    if (!provider.features.modelListing && providerModelInput && provider.storageKeys.model) {
+        localStorage.setItem(provider.storageKeys.model, providerModelInput.value || '');
+    }
+
+    if (providerId === 'gemini' && modelSelect?.value) {
         localStorage.setItem('last_model', modelSelect.value);
         localStorage.setItem('last_model_gemini', modelSelect.value);
     }

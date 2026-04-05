@@ -1,9 +1,10 @@
 import { $ } from '../ui.js';
 import { geminiProvider } from './geminiProvider.js';
+import { linkApiProvider } from './linkApiProvider.js';
 import { openaiCompatibleProvider } from './openaiCompatibleProvider.js';
 
 const DEFAULT_PROVIDER_ID = 'gemini';
-const PROVIDERS = [geminiProvider, openaiCompatibleProvider];
+const PROVIDERS = [geminiProvider, linkApiProvider, openaiCompatibleProvider];
 const PROVIDER_MAP = new Map(PROVIDERS.map(provider => [provider.id, provider]));
 
 function getProviderSelect() {
@@ -98,7 +99,7 @@ export function getProviderStorageSnapshot(providerId = getCurrentProviderId()) 
         apiKey: localStorage.getItem(provider.storageKeys.apiKey) || '',
         model: localStorage.getItem(provider.storageKeys.model) || '',
         baseUrl: provider.storageKeys.baseUrl
-            ? localStorage.getItem(provider.storageKeys.baseUrl) || ''
+            ? localStorage.getItem(provider.storageKeys.baseUrl) || provider.defaultBaseUrl || ''
             : ''
     };
 }

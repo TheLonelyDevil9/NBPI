@@ -485,6 +485,31 @@
     text-overflow: ellipsis;
 }
 
+.generation-details-error {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    color: var(--color-error);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.generation-details-image {
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.generation-details-image img {
+    display: block;
+    width: 100%;
+    max-height: 420px;
+    object-fit: contain;
+}
+
 .generation-details-refs {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));

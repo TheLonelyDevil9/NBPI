@@ -44,6 +44,7 @@ function resetItemForRetry(item) {
     item.startedAt = null;
     item.completedAt = null;
     item.filename = null;
+    item.historyId = null;
 }
 
 async function restoreRefsForRetryItems(items) {
@@ -61,6 +62,60 @@ async function restoreRefsForRetryItems(items) {
     } catch (e) {
         console.error('[Queue] Failed to restore refs for retry:', e);
     }
+}
+
+function cloneRefImages(refImages = []) {
+    return Array.isArray(refImages) ? refImages.map(ref => ({ ...ref })) : [];
+}
+
+function cloneSafetySettings(settings = []) {
+    return Array.isArray(settings) ? settings.map(setting => ({ ...setting })) : [];
+}
+
+function buildHistoryEntry(item, overrides = {}) {
+    const createdAt = overrides.createdAt || item.completedAt || Date.now();
+    const generationTimeMs = item.startedAt ? Math.max(0, createdAt - item.startedAt) : null;
+    const entry = {
+        id: overrides.id || ('gh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)),
+        prompt: item.prompt,
+        config: {
+            providerId: item.config.providerId || 'gemini',
+            providerLabel: item.config.providerLabel || 'Gemini',
+            model: item.config.model,
+            baseUrl: item.config.baseUrl || '',
+            ratio: item.config.ratio,
+            resolution: item.config.resolution,
+            thinkingBudget: item.config.thinkingBudget,
+            searchEnabled: item.config.searchEnabled,
+            safetySettings: cloneSafetySettings(item.config.safetySettings || [])
+        },
+        refImages: cloneRefImages(item.refImages || []),
+        filename: overrides.filename !== undefined ? overrides.filename : (item.filename || ''),
+        batchName: item.batchName || '',
+        name: item.name || '',
+        createdAt,
+        generationTimeMs,
+        status: overrides.status || item.status || QueueStatus.COMPLETED
+    };
+
+    const error = overrides.error !== undefined ? overrides.error : item.error;
+    if (error) {
+        entry.error = error;
+    }
+
+    if (overrides.imageData) {
+        entry.imageData = overrides.imageData;
+    }
+
+    return entry;
+}
+
+async function saveTerminalHistoryForItem(item, overrides = {}) {
+    const entry = buildHistoryEntry(item, overrides);
+    await saveHistoryEntry(entry);
+    item.historyId = entry.id;
+    pruneHistory().catch(() => {});
+    return entry.id;
 }
 
 /**
@@ -421,34 +476,13 @@ async function processQueue() {
 
             // Save generation history entry (before ref cleanup)
             const generationTime = item.completedAt - item.startedAt;
-            const historyId = 'gh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+            let historyId = null;
             try {
-                await saveHistoryEntry({
-                    id: historyId,
-                    prompt: item.prompt,
-                    config: {
-                        providerId: item.config.providerId || 'gemini',
-                        providerLabel: item.config.providerLabel || 'Gemini',
-                        model: item.config.model,
-                        baseUrl: item.config.baseUrl || '',
-                        ratio: item.config.ratio,
-                        resolution: item.config.resolution,
-                        thinkingBudget: item.config.thinkingBudget,
-                        searchEnabled: item.config.searchEnabled,
-                        safetySettings: item.config.safetySettings || []
-                    },
-                    refImages: item.refImages || [],
-                    filename: filename,
-                    batchName: item.batchName || '',
-                    name: item.name || '',
-                    createdAt: Date.now(),
-                    generationTimeMs: generationTime
+                historyId = await saveTerminalHistoryForItem(item, {
+                    status: QueueStatus.COMPLETED,
+                    filename,
+                    imageData: result.imageData
                 });
-                item.historyId = historyId;
-                // Prune every 50 completions
-                if (queueState.completedCount % 50 === 0) {
-                    pruneHistory().catch(() => {});
-                }
             } catch (e) {
                 console.error('[Queue] Failed to save history entry:', e);
             }
@@ -472,7 +506,18 @@ async function processQueue() {
         } catch (e) {
             if (e.name === 'AbortError') {
                 item.status = QueueStatus.CANCELLED;
-                item.error = 'Cancelled';
+                item.error = item.error || 'Cancelled';
+                item.completedAt = Date.now();
+                try {
+                    await saveTerminalHistoryForItem(item, {
+                        status: QueueStatus.CANCELLED,
+                        error: item.error
+                    });
+                } catch (historyError) {
+                    console.error('[Queue] Failed to save cancelled history entry:', historyError);
+                }
+                persistQueueState();
+                notifyProgress();
                 break;
             }
 
@@ -491,6 +536,14 @@ async function processQueue() {
             item.error = e.message || 'Unknown error';
             item.completedAt = Date.now();
             queueState.failedCount++;
+            try {
+                await saveTerminalHistoryForItem(item, {
+                    status: QueueStatus.FAILED,
+                    error: item.error
+                });
+            } catch (historyError) {
+                console.error('[Queue] Failed to save failed history entry:', historyError);
+            }
         }
 
         persistQueueState();

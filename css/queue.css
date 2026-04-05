@@ -420,6 +420,40 @@
     border-radius: var(--radius-sm);
 }
 
+.history-status-badge {
+    border: 1px solid transparent;
+    font-weight: 600;
+}
+
+.history-status-completed,
+.history-item-meta span.history-status-completed {
+    color: var(--color-success);
+    background: rgba(34, 197, 94, 0.14);
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.history-status-failed,
+.history-item-meta span.history-status-failed {
+    color: var(--color-error);
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.history-status-cancelled,
+.history-item-meta span.history-status-cancelled {
+    color: var(--color-warning);
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.35);
+}
+
+.history-item-error {
+    margin-top: 6px;
+    color: var(--color-error);
+    font-size: var(--font-size-xs);
+    line-height: 1.4;
+    word-break: break-word;
+}
+
 .history-item-delete {
     flex-shrink: 0;
     width: 24px;

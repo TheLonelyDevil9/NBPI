@@ -208,32 +208,41 @@ function renderQueueItemList(items) {
         return;
     }
 
-    list.innerHTML = items.map(item => `
-        <div class="queue-item queue-item-${item.status}" data-id="${item.id}">
-            <div class="queue-item-status">
-                ${getStatusIcon(item.status)}
-            </div>
-            <div class="queue-item-info">
-                <div class="queue-item-prompt">${escapeHtml(item.prompt.slice(0, 40))}${item.prompt.length > 40 ? '...' : ''}</div>
-                <div class="queue-item-meta">
-                    v${item.variationIndex + 1}/${item.totalVariations}
-                    ${item.error ? `<span class="queue-error-text">${escapeHtml(item.error)}</span>` : ''}
+    list.innerHTML = items.map(item => {
+        const canRetry = item.status === QueueStatus.FAILED || item.status === QueueStatus.CANCELLED;
+        const canInspect = !!item.historyId && (
+            item.status === QueueStatus.COMPLETED ||
+            item.status === QueueStatus.FAILED ||
+            item.status === QueueStatus.CANCELLED
+        );
+
+        return `
+            <div class="queue-item queue-item-${item.status}" data-id="${item.id}">
+                <div class="queue-item-status">
+                    ${getStatusIcon(item.status)}
+                </div>
+                <div class="queue-item-info">
+                    <div class="queue-item-prompt">${escapeHtml(item.prompt.slice(0, 40))}${item.prompt.length > 40 ? '...' : ''}</div>
+                    <div class="queue-item-meta">
+                        v${item.variationIndex + 1}/${item.totalVariations}
+                        ${item.error ? `<span class="queue-error-text">${escapeHtml(item.error)}</span>` : ''}
+                    </div>
+                </div>
+                <div class="queue-item-actions">
+                    ${item.status === QueueStatus.PENDING ? `
+                        <button class="queue-item-btn skip-btn" data-queue-action="skip" data-item-id="${item.id}" title="Skip this item">Skip</button>
+                        <button class="queue-item-remove" data-queue-action="remove" data-item-id="${item.id}" title="Remove from queue">×</button>
+                    ` : ''}
+                    ${canRetry ? `
+                        <button class="queue-item-btn retry-btn" data-queue-action="retry" data-item-id="${item.id}" title="Retry this item">Retry</button>
+                    ` : ''}
+                    ${canInspect ? `
+                        <button class="queue-item-btn info-btn" data-queue-action="info" data-history-id="${item.historyId}" title="View generation details">Info</button>
+                    ` : ''}
                 </div>
             </div>
-            <div class="queue-item-actions">
-                ${item.status === QueueStatus.PENDING ? `
-                    <button class="queue-item-btn skip-btn" data-queue-action="skip" data-item-id="${item.id}" title="Skip this item">Skip</button>
-                    <button class="queue-item-remove" data-queue-action="remove" data-item-id="${item.id}" title="Remove from queue">×</button>
-                ` : ''}
-                ${(item.status === QueueStatus.FAILED || item.status === QueueStatus.CANCELLED) ? `
-                    <button class="queue-item-btn retry-btn" data-queue-action="retry" data-item-id="${item.id}" title="Retry this item">Retry</button>
-                ` : ''}
-                ${item.status === QueueStatus.COMPLETED && item.historyId ? `
-                    <button class="queue-item-btn info-btn" data-queue-action="info" data-history-id="${item.historyId}" title="View generation details">Info</button>
-                ` : ''}
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function getStatusIcon(status) {
