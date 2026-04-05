@@ -44,6 +44,7 @@ import {
 } from './profiles.js';
 import {
     getCurrentProvider,
+    persistProviderState,
     persistCurrentProviderState,
     providerSupports,
     restoreProviderState,
@@ -81,8 +82,10 @@ function bindMainControls() {
 
 function bindProviderControls() {
     $('providerSelect')?.addEventListener('change', async (event) => {
-        persistCurrentProviderState();
-        switchProvider(event.target.value);
+        const nextProviderId = event.target.value;
+        const previousProviderId = localStorage.getItem('provider_id') || getCurrentProvider().id;
+        persistProviderState(previousProviderId, { setActiveProvider: false });
+        switchProvider(nextProviderId);
         renderRefs();
         updateThinkingNote();
 

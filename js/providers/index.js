@@ -133,9 +133,11 @@ export function getCurrentProviderPublicConfig() {
     };
 }
 
-export function persistCurrentProviderState() {
-    const provider = getCurrentProvider();
-    localStorage.setItem('provider_id', provider.id);
+export function persistProviderState(providerId = getCurrentProviderId(), { setActiveProvider = true } = {}) {
+    const provider = getProvider(providerId);
+    if (setActiveProvider) {
+        localStorage.setItem('provider_id', provider.id);
+    }
 
     const apiKey = $('apiKey')?.value || '';
     localStorage.setItem(provider.storageKeys.apiKey, apiKey);
@@ -155,6 +157,10 @@ export function persistCurrentProviderState() {
             localStorage.setItem('last_model', currentModel);
         }
     }
+}
+
+export function persistCurrentProviderState() {
+    persistProviderState(getCurrentProviderId());
 }
 
 export function restoreProviderModelSelection() {

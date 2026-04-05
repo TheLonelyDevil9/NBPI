@@ -6,7 +6,7 @@
 import { DEFAULT_QUEUE_DELAY_MS, MAX_QUEUE_ITEMS, QUEUE_STORAGE_KEY } from './config.js';
 import { generateSingleImage, showImageResult } from './generation.js';
 import { saveQueueRefsMultiple, loadQueueRefsMultiple, deleteQueueRefsMultiple, clearAllQueueRefs, saveHistoryEntry, pruneHistory } from './history.js';
-import { saveImageToFilesystem, getDirectoryInfo } from './filesystem.js';
+import { saveImageToFilesystem } from './filesystem.js';
 import { showToast, haptic, playNotificationSound, showConfirmDialog } from './ui.js';
 
 // Queue item statuses
@@ -441,22 +441,19 @@ async function processQueue() {
             );
 
             // Save to filesystem
-            const dirInfo = getDirectoryInfo();
             let filename = null;
 
-            if (dirInfo.isSet) {
-                try {
-                    const saveResult = await saveImageToFilesystem(
-                        result.imageData,
-                        item.prompt,
-                        item.variationIndex,
-                        item.batchName,
-                        item.name
-                    );
-                    filename = saveResult.filename;
-                } catch (e) {
-                    console.error('Filesystem save failed:', e);
-                }
+            try {
+                const saveResult = await saveImageToFilesystem(
+                    result.imageData,
+                    item.prompt,
+                    item.variationIndex,
+                    item.batchName,
+                    item.name
+                );
+                filename = saveResult.filename;
+            } catch (e) {
+                console.error('Image save/download failed:', e);
             }
 
             // Mark completed

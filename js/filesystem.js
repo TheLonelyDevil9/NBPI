@@ -37,7 +37,7 @@ export function getPickerSupportDetails(kind = 'directory') {
             supported: false,
             reason: 'insecure-context',
             message: kind === 'directory'
-                ? 'Folder selection requires localhost, 127.0.0.1, or HTTPS. Images will download instead on this origin.'
+                ? 'Folder selection requires localhost, 127.0.0.1, or HTTPS. Images will auto-download to your browser\'s chosen download folder on this origin.'
                 : 'File picking requires localhost, 127.0.0.1, or HTTPS on this origin.'
         };
     }
@@ -46,7 +46,7 @@ export function getPickerSupportDetails(kind = 'directory') {
         supported: false,
         reason: 'unsupported-browser',
         message: kind === 'directory'
-            ? 'This browser does not support File System Access. Images will download instead.'
+            ? 'This browser does not support File System Access. Images will auto-download to your browser\'s chosen download folder.'
             : 'This browser does not support File System Access file pickers.'
     };
 }
@@ -113,9 +113,11 @@ export function setFilesystemDB(database) {
  * Get current directory info
  */
 export function getDirectoryInfo() {
+    const support = getFileSystemSupportDetails();
     return {
-        name: directoryHandle?.name || null,
-        isSet: directoryHandle !== null
+        name: directoryHandle?.name || (support.supported ? null : 'Browser Downloads'),
+        isSet: directoryHandle !== null,
+        browserManaged: !support.supported
     };
 }
 
@@ -242,8 +244,60 @@ function getMimeType(dataUrl) {
  * Get file extension for MIME type
  */
 function getExtension(mimeType) {
-    // Always return .png (API returns PNG by default)
-    return '.png';
+    switch ((mimeType || '').toLowerCase()) {
+        case 'image/jpeg':
+        case 'image/jpg':
+            return '.jpg';
+        case 'image/webp':
+            return '.webp';
+        case 'image/gif':
+            return '.gif';
+        case 'image/png':
+        default:
+            return '.png';
+    }
+}
+
+function ensureFilenameExtension(filename, mimeType = 'image/png') {
+    const extension = getExtension(mimeType);
+    if (!filename) {
+        return `image${extension}`;
+    }
+
+    const normalized = filename.trim();
+    if (!normalized) {
+        return `image${extension}`;
+    }
+
+    if (/\.[a-z0-9]+$/i.test(normalized)) {
+        return normalized.replace(/\.[a-z0-9]+$/i, extension);
+    }
+
+    return `${normalized}${extension}`;
+}
+
+export async function downloadImageData(imageDataUrl, filename) {
+    const mimeType = getMimeType(imageDataUrl);
+    const normalizedFilename = ensureFilenameExtension(filename, mimeType);
+    const response = await fetch(imageDataUrl);
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
+    try {
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = normalizedFilename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+    } finally {
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }
+
+    return {
+        filename: normalizedFilename,
+        mimeType
+    };
 }
 
 /**
@@ -308,7 +362,7 @@ export function generateFilename(prompt, variationIndex = 0, batchName = '', mim
  * @param {string} name - Optional per-prompt name (replaces prompt snippet)
  */
 export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex = 0, batchName = '', name = '') {
-    const mimeType = 'image/png'; // API returns PNG
+    const mimeType = getMimeType(imageDataUrl);
 
     // Fallback: trigger browser download
     if (!directoryHandle || !await hasWritePermission()) {
@@ -355,18 +409,13 @@ export async function saveImageToFilesystem(imageDataUrl, prompt, variationIndex
  * Fallback: trigger browser download
  */
 function triggerDownload(imageDataUrl, prompt, variationIndex, batchName = '', mimeType = 'image/png', name = '') {
-    const filename = generateFilename(prompt, variationIndex, batchName, 'image/png', name);
-    const a = document.createElement('a');
-    a.href = imageDataUrl;
-    a.download = filename;
-    a.click();
-
-    return {
-        filename,
+    const filename = generateFilename(prompt, variationIndex, batchName, mimeType, name);
+    return downloadImageData(imageDataUrl, filename).then(({ filename: downloadFilename }) => ({
+        filename: downloadFilename,
         success: true,
         method: 'download',
         directory: null
-    };
+    }));
 }
 
 /**
@@ -401,7 +450,7 @@ function updateDirectoryUI() {
     const selectBtn = document.getElementById('selectDirBtn');
 
     if (nameEl) {
-        nameEl.textContent = directoryHandle?.name || 'Not set';
+        nameEl.textContent = directoryHandle?.name || (getFileSystemSupportDetails().supported ? 'Not set' : 'Browser Downloads');
         nameEl.classList.toggle('selected', !!directoryHandle);
     }
 
@@ -423,10 +472,16 @@ export function updateFileSystemSupportUI() {
     const warningEl = document.getElementById('fsSupportWarning');
     const selectBtn = document.getElementById('selectDirBtn');
     const queueSelectBtn = document.getElementById('selectQueueOutputDirBtn');
+    const nameEl = document.getElementById('outputDirName');
 
     if (warningEl) {
         warningEl.style.display = support.supported ? 'none' : 'block';
         warningEl.textContent = support.message;
+    }
+
+    if (nameEl && !support.supported && !directoryHandle) {
+        nameEl.textContent = 'Browser Downloads';
+        nameEl.classList.remove('selected');
     }
 
     if (selectBtn) {

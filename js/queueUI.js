@@ -1049,7 +1049,7 @@ export function updateDirectoryDisplay() {
     // Update modal folder display
     const modalDirName = $('queueDirName');
     if (modalDirName) {
-        modalDirName.textContent = dirInfo.isSet ? dirInfo.name : 'Not set';
+        modalDirName.textContent = dirInfo.name || 'Not set';
         modalDirName.classList.toggle('selected', dirInfo.isSet);
     }
 }

@@ -183,7 +183,7 @@ function buildLinkApiBody(prompt, config, refImages = []) {
             }))
     ];
 
-    return {
+    const body = {
         model: config.model,
         messages: [{
             role: 'user',
@@ -191,6 +191,15 @@ function buildLinkApiBody(prompt, config, refImages = []) {
         }],
         stream: false
     };
+
+    const imageConfig = {};
+    if (config.ratio) imageConfig.aspectRatio = config.ratio;
+    if (config.resolution) imageConfig.imageSize = config.resolution;
+    if (Object.keys(imageConfig).length > 0) {
+        body.generationConfig = { imageConfig };
+    }
+
+    return body;
 }
 
 export const linkApiProvider = {

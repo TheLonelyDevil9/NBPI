@@ -1,5 +1,6 @@
 import { $, showToast, updateThinkingLabel } from './ui.js';
 import { deleteHistoryEntry, loadHistoryEntry, loadRecentHistory } from './history.js';
+import { downloadImageData } from './filesystem.js';
 import { renderRefs, setRefImages } from './references.js';
 import { persistAllInputs } from './persistence.js';
 import { getProvider, persistCurrentProviderState, providerSupports, switchProvider } from './providers/index.js';
@@ -51,11 +52,11 @@ function getHistoryStatusLabel(status) {
 }
 
 function getHistoryDownloadName(entry) {
-    if (entry.filename) {
-        return entry.filename;
+    if (entry.filename?.trim()) {
+        return entry.filename.trim();
     }
     const timestamp = entry.createdAt ? new Date(entry.createdAt).toISOString().replace(/[:.]/g, '-') : Date.now();
-    return `generation_${timestamp}.png`;
+    return `generation_${timestamp}`;
 }
 
 export function initQueueHistoryUI() {
@@ -231,15 +232,17 @@ async function copyGenerationPrompt() {
     }
 }
 
-function downloadGenerationImage() {
+async function downloadGenerationImage() {
     const overlay = document.getElementById('generationDetailsOverlay');
     const entry = overlay?._historyEntry;
     if (!entry?.imageData) return;
 
-    const link = document.createElement('a');
-    link.href = entry.imageData;
-    link.download = getHistoryDownloadName(entry);
-    link.click();
+    try {
+        await downloadImageData(entry.imageData, getHistoryDownloadName(entry));
+    } catch (error) {
+        console.error('Failed to download generated image:', error);
+        showToast('Download failed');
+    }
 }
 
 function downloadGenerationRef(index) {
@@ -277,6 +280,7 @@ async function redoFromHistory(historyId) {
 
     const providerId = entry.config?.providerId || 'gemini';
     const provider = getProvider(providerId);
+    persistCurrentProviderState();
     switchProvider(providerId);
 
     if (providerId === 'gemini' && $('apiKey')?.value?.length > 20) {
