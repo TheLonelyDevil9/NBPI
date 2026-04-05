@@ -111,19 +111,19 @@ async function findImageData(node, signal, depth = 0) {
         return toDataUrl(node.image_base64, node.mime_type || node.mimeType || 'image/png');
     }
 
+    const nestedKeys = ['data', 'image', 'images', 'content', 'parts', 'message', 'choices', 'output', 'result'];
+    for (const key of nestedKeys) {
+        if (!node[key]) continue;
+        const imageData = await findImageData(node[key], signal, depth + 1);
+        if (imageData) return imageData;
+    }
+
     const directImage = await normalizeImageSource(node.url, signal, node.mime_type || node.mimeType);
     if (directImage) return directImage;
 
     if (node.image_url) {
         const imageUrl = typeof node.image_url === 'string' ? node.image_url : node.image_url.url;
         const imageData = await normalizeImageSource(imageUrl, signal, node.mime_type || node.mimeType);
-        if (imageData) return imageData;
-    }
-
-    const nestedKeys = ['data', 'image', 'images', 'content', 'message', 'choices', 'output', 'result'];
-    for (const key of nestedKeys) {
-        if (!node[key]) continue;
-        const imageData = await findImageData(node[key], signal, depth + 1);
         if (imageData) return imageData;
     }
 
