@@ -30,8 +30,33 @@ function isLikelyBase64(value = '') {
         /^[A-Za-z0-9+/]+=*$/.test(normalized);
 }
 
+function normalizeMimeType(mimeType = '') {
+    const normalized = mimeType.trim().toLowerCase();
+    if (!normalized) return 'image/png';
+    if (normalized === 'jpg') return 'image/jpeg';
+    if (normalized.startsWith('image/')) return normalized;
+    return `image/${normalized}`;
+}
+
 function toDataUrl(base64, mimeType = 'image/png') {
-    return `data:${mimeType};base64,${base64.replace(/\s+/g, '')}`;
+    return `data:${normalizeMimeType(mimeType)};base64,${base64.replace(/\s+/g, '')}`;
+}
+
+function extractImageDataUrl(value = '') {
+    const text = value.trim();
+    if (!text) return null;
+
+    if (text.startsWith('data:image/')) {
+        return text;
+    }
+
+    const normalizedText = text.replace(/\s+/g, '');
+    const base64TagMatch = normalizedText.match(/(?:^|[^A-Za-z0-9/+])(?:data:)?(?:image\/)?([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/i);
+    if (base64TagMatch) {
+        return toDataUrl(base64TagMatch[2], base64TagMatch[1]);
+    }
+
+    return null;
 }
 
 async function fetchImageAsDataUrl(url, signal) {
@@ -44,7 +69,8 @@ async function fetchImageAsDataUrl(url, signal) {
 
 async function normalizeImageSource(value, signal, mimeType = 'image/png') {
     if (!value || typeof value !== 'string') return null;
-    if (value.startsWith('data:image/')) return value;
+    const extractedImage = extractImageDataUrl(value);
+    if (extractedImage) return extractedImage;
     if (/^https?:\/\//i.test(value)) {
         return fetchImageAsDataUrl(value, signal);
     }
@@ -109,7 +135,7 @@ function findTextMessage(node, depth = 0) {
 
     if (typeof node === 'string') {
         const text = node.trim();
-        if (!text || text.startsWith('data:image/') || isLikelyBase64(text)) {
+        if (!text || extractImageDataUrl(text) || isLikelyBase64(text)) {
             return null;
         }
         return text;
