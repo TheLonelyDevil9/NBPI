@@ -95,7 +95,7 @@ my_batch/
 ### Filesystem Output
 
 - **Direct file saving** to a user-selected output folder via the File System Access API
-- Auto-generated filenames: `YYYYMMDD_HHMMSS_prompt-snippet.png`
+- Auto-generated filenames: `YYYYMMDD_HHMMSS_prompt-snippet.<ext>`
 - Persistent directory handle — remembers your output folder across sessions
 - Fallback to browser download when filesystem access is unavailable
 - Works for both single generations and batch queue
@@ -329,10 +329,12 @@ All data stays in your browser — nothing is sent to any server except the Gemi
 | ------- | -------- | -------------------- |
 | **Input (reference images)** | Any browser-readable (PNG, JPEG, WebP, GIF, BMP) | Compressed to max 2560px longest side, JPEG 0.85 quality |
 | **Sent to Gemini API** | base64 `inlineData` with original mimeType | Up to 14 images per request |
-| **API response** | Typically PNG | Whatever mimeType Gemini returns (usually `image/png`) |
-| **Filesystem output** | PNG | Named `YYYYMMDD_HHMMSS_prompt-snippet.png` |
+| **API response** | Provider-dependent | Gemini usually returns `image/png`; LinkAPI responses are validated at runtime |
+| **Filesystem output** | Preserves provider MIME | Named `YYYYMMDD_HHMMSS_prompt-snippet.<ext>` |
 | **History thumbnails** | JPEG data URL in IndexedDB | Max 400px longest dimension, 0.85 quality |
 | **History full images** | On disk (filesystem mode) or data URL in IndexedDB (legacy) | Full resolution |
+
+When using LinkAPI, NBPI now fails the generation if the selected output is not `image/png`. This prevents JPEG responses from being silently saved as if they were full-quality PNGs.
 
 ## Browser Support
 

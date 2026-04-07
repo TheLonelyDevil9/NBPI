@@ -110,7 +110,7 @@
 - **Per-Prompt Name Labels**: Optional `name` field per prompt for readable filenames
   - Adds a "Filename label" input to each prompt box in batch setup
   - When set, replaces the truncated prompt snippet in the filename
-  - Format: `{batchName}_{name}_{timestamp}{variation}.png`
+  - Format: `{batchName}_{name}_{timestamp}{variation}.<ext>`
   - Supports batch JSON import/export (`"name": "elf-archer"`)
   - Duplicated boxes inherit the source name
   - Falls back to prompt snippet (first 40 chars) when no name is set
@@ -118,10 +118,15 @@
 ## [Unreleased] - 2026-03-12
 
 ### Added
-- **PNG File Extension Standardization**: All generated images now save with `.png` extension
-  - Gemini API already returns PNG format by default
-  - Simplified file extension logic to always use `.png`
-  - No conversion needed - preserves original API response
+- **LinkAPI Response Diagnostics**: Hidden live mapping for LinkAPI image responses
+  - Enable with `localStorage.nbpi_linkapi_debug = '1'`
+  - Logs the sanitized request body, response metadata, candidate paths, source kinds, MIME types, and fetched asset sizes
+  - Helps confirm whether LinkAPI is returning PNG, JPEG, or mixed candidates before save
+
+- **Generated Output Format Handling**: Saved files now keep the actual provider MIME type
+  - Gemini API still returns PNG by default
+  - LinkAPI now fails generations that do not resolve to `image/png`
+  - Prevents JPEG responses from being mislabeled as full-quality PNG files
   - Reference images remain JPEG for compression efficiency (70% storage reduction)
 
 - **Variations Input on Main Screen**: Generate multiple variations without opening batch modal
@@ -141,20 +146,22 @@
   - Profiles excluded from git via `.gitignore`
 
 ### Changed
-- `js/filesystem.js`: Updated `getExtension()` to always return `.png`
-- `js/filesystem.js`: Updated `saveImageToFilesystem()` to use PNG mime type
+- `js/api.js`: Added optional response metadata capture for provider debugging
+- `js/filesystem.js`: Preserves the actual image extension on save
+- `js/providers/linkApiProvider.js`: Collects all image candidates, prefers PNG, and rejects non-PNG LinkAPI outputs
 - `js/generation.js`: Added variations support to main generate function
 - `js/persistence.js`: Added variations input to persistence system
 - `index.html`: Added variations input field to main UI
 - `.gitignore`: Added `profiles/` and `*.profile.json` exclusions
+- `README.md`: Documented provider-dependent output formats and LinkAPI PNG enforcement
 
 ### Technical Details
 
-**PNG Standardization:**
-- No image conversion needed - API already returns PNG
-- Simply ensures consistent `.png` file extension
-- Zero performance overhead
-- Backward compatible with existing data URLs in IndexedDB
+**LinkAPI Output Validation:**
+- Response mapping inspects all returned image candidates before choosing one
+- Candidate selection prefers PNG over JPEG, WebP, and GIF
+- Non-PNG LinkAPI results fail before history save or filesystem write
+- Request-side format flags remain unchanged until LinkAPI confirms a supported PNG control
 
 **Profile Structure:**
 ```json
@@ -172,17 +179,23 @@
 ```
 
 ### Files Modified
-- `js/filesystem.js` - PNG extension standardization
+- `js/api.js` - Optional response metadata capture
+- `js/filesystem.js` - Provider-aware extension preservation
+- `js/providers/linkApiProvider.js` - LinkAPI candidate mapping and strict PNG validation
 - `js/profiles.js` - New profile management module
 - `js/app.js` - Profile UI initialization and handlers
 - `index.html` - Profile management UI section
 - `css/components.css` - Profile section styling
 - `.gitignore` - Profile exclusions
+- `README.md` - Output format documentation
 
 ### Testing Recommendations
-1. Generate images and verify all save as `.png` files
-2. Create a profile with custom settings
-3. Load profile and verify settings are restored
-4. Export/import profile and verify data integrity
-5. Delete profile and verify cleanup
-6. Check git status to confirm profiles are ignored
+1. Enable `localStorage.nbpi_linkapi_debug = '1'` and verify LinkAPI debug logs show response metadata plus candidate MIME details
+2. Generate a Gemini image and verify it still saves as `.png`
+3. Generate a LinkAPI image that resolves to PNG and verify it saves as `.png`
+4. Generate a LinkAPI image that resolves to JPEG and verify the generation fails before save
+5. Create a profile with custom settings
+6. Load profile and verify settings are restored
+7. Export/import profile and verify data integrity
+8. Delete profile and verify cleanup
+9. Check git status to confirm profiles are ignored

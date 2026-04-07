@@ -38,7 +38,9 @@ export async function requestJson(url, {
     method = 'GET',
     headers = {},
     body = null,
-    signal = null
+    signal = null,
+    includeMeta = false,
+    metaHeaders = ['content-type', 'content-length', 'x-request-id']
 } = {}) {
     const response = await fetch(url, {
         method,
@@ -49,6 +51,20 @@ export async function requestJson(url, {
 
     let data = null;
     const contentType = response.headers.get('content-type') || '';
+    const responseMeta = {
+        status: response.status,
+        ok: response.ok,
+        url: response.url,
+        contentType,
+        headers: {}
+    };
+
+    metaHeaders.forEach((headerName) => {
+        const value = response.headers.get(headerName);
+        if (value !== null) {
+            responseMeta.headers[headerName] = value;
+        }
+    });
 
     if (contentType.includes('application/json')) {
         data = await response.json();
@@ -62,10 +78,11 @@ export async function requestJson(url, {
         const error = new Error(errorMessage);
         error.status = response.status;
         error.response = data;
+        error.meta = responseMeta;
         throw error;
     }
 
-    return data;
+    return includeMeta ? { data, meta: responseMeta } : data;
 }
 
 export async function requestJsonWithRetry({

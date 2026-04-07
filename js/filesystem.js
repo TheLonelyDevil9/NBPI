@@ -354,7 +354,7 @@ export function generateFilename(prompt, variationIndex = 0, batchName = '', mim
 }
 
 /**
- * Save image to filesystem (preserves format, ensures .png extension)
+ * Save image to filesystem (preserves source format)
  * @param {string} imageDataUrl - The image data URL
  * @param {string} prompt - The prompt text
  * @param {number} variationIndex - Variation index (0-based)
